@@ -1,313 +1,347 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { 
-  FileText, 
-  Download, 
-  Trash2, 
-  ExternalLink, 
-  CheckCircle2, 
-  XCircle, 
-  SortAsc, 
-  Search,
-  LayoutGrid,
-  ChevronRight,
-  ChevronLeft
-} from 'lucide-react';
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>URL Auditor Tool</title>
+    <!-- React & Babel for in-browser JSX transformation -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        iframe { background: white; }
+    </style>
+</head>
+<body class="bg-slate-50 overflow-hidden">
+    <div id="root"></div>
 
-const App = () => {
-  const [urlInput, setUrlInput] = useState('');
-  const [items, setItems] = useState([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+    <script type="text/babel">
+        const { useState, useMemo, useEffect } = React;
 
-  // Initialize data from paste
-  const handleImport = () => {
-    const lines = urlInput.split(/\n/).filter(line => line.trim() !== '');
-    const newItems = lines.map((url, index) => ({
-      id: Date.now() + index,
-      url: url.trim().startsWith('http') ? url.trim() : `https://${url.trim()}`,
-      status: 'pending', // 'yes', 'no', 'pending'
-      timestamp: null
-    }));
-    setItems([...items, ...newItems]);
-    setUrlInput('');
-  };
+        // Custom Icon Component for Lucide
+        const Icon = ({ name, size = 18, className = "" }) => {
+            const [svg, setSvg] = useState("");
+            useEffect(() => {
+                if (window.lucide) {
+                    const iconNode = window.lucide.icons[name];
+                    if (iconNode) {
+                        // Simple way to render lucide icons in this specific setup
+                        const parts = iconNode.map(([tag, attrs]) => {
+                            const attrStr = Object.entries(attrs).map(([k, v]) => `${k}="${v}"`).join(' ');
+                            return `<${tag} ${attrStr}></${tag}>`;
+                        }).join('');
+                        setSvg(parts);
+                    }
+                }
+            }, [name]);
 
-  // Actions
-  const markStatus = (id, status) => {
-    setItems(prev => prev.map(item => 
-      item.id === id ? { ...item, status, timestamp: new Date().toISOString() } : item
-    ));
-    // Auto-advance if marking the current one
-    if (items[currentIndex]?.id === id && currentIndex < items.length - 1) {
-      setCurrentIndex(currentIndex + 1);
-    }
-  };
-
-  const clearAll = () => {
-    if (confirm('Are you sure you want to clear all data?')) {
-      setItems([]);
-      setCurrentIndex(0);
-    }
-  };
-
-  // Sorting / Filtering
-  const sortedItems = useMemo(() => {
-    let result = [...items];
-    if (searchTerm) {
-      result = result.filter(item => item.url.toLowerCase().includes(searchTerm.toLowerCase()));
-    }
-    return result;
-  }, [items, searchTerm]);
-
-  const sortAlphabetical = () => {
-    const sorted = [...items].sort((a, b) => a.url.localeCompare(b.url));
-    setItems(sorted);
-  };
-
-  const groupByDomain = () => {
-    const sorted = [...items].sort((a, b) => {
-      try {
-        const urlA = new URL(a.url).hostname;
-        const urlB = new URL(b.url).hostname;
-        return urlA.localeCompare(urlB);
-      } catch (e) {
-        return a.url.localeCompare(b.url);
-      }
-    });
-    setItems(sorted);
-  };
-
-  // Export to CSV
-  const exportCSV = () => {
-    const header = "URL,Action: Add Orbitrap IUS Yes/No\n";
-    const rows = items.map(item => {
-      const statusLabel = item.status === 'yes' ? 'Yes' : item.status === 'no' ? 'No' : '';
-      return `"${item.url}","${statusLabel}"`;
-    }).join("\n");
-    
-    const blob = new Blob([header + rows], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement("a");
-    const url = URL.createObjectURL(blob);
-    link.setAttribute("href", url);
-    link.setAttribute("download", `url_audit_${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  const currentItem = items[currentIndex];
-
-  return (
-    <div className="flex h-screen w-full bg-slate-50 overflow-hidden font-sans text-slate-900">
-      {/* Sidebar: Controls & List */}
-      <div className={`${sidebarOpen ? 'w-1/3' : 'w-12'} flex flex-col border-r bg-white transition-all duration-300 relative`}>
-        <button 
-          onClick={() => setSidebarOpen(!sidebarOpen)}
-          className="absolute -right-3 top-1/2 transform -translate-y-1/2 bg-white border rounded-full p-1 z-10 hover:bg-slate-100 shadow-sm"
-        >
-          {sidebarOpen ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
-        </button>
-
-        {sidebarOpen && (
-          <div className="flex flex-col h-full">
-            {/* Header */}
-            <div className="p-4 border-b space-y-4">
-              <div className="flex items-center justify-between">
-                <h1 className="text-xl font-bold flex items-center gap-2">
-                  <LayoutGrid className="text-blue-600" /> Auditor
-                </h1>
-                <div className="flex gap-2">
-                  <button onClick={exportCSV} className="p-2 hover:bg-green-50 text-green-700 rounded-md transition-colors" title="Export CSV">
-                    <Download size={20} />
-                  </button>
-                  <button onClick={clearAll} className="p-2 hover:bg-red-50 text-red-600 rounded-md transition-colors" title="Clear List">
-                    <Trash2 size={20} />
-                  </button>
-                </div>
-              </div>
-
-              {/* Paste Input */}
-              <div className="space-y-2">
-                <textarea
-                  placeholder="Paste URLs here (one per line)..."
-                  className="w-full h-24 p-2 text-sm border rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none bg-slate-50"
-                  value={urlInput}
-                  onChange={(e) => setUrlInput(e.target.value)}
+            return (
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width={size}
+                    height={size}
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className={className}
+                    dangerouslySetInnerHTML={{ __html: svg }}
                 />
-                <button 
-                  onClick={handleImport}
-                  disabled={!urlInput.trim()}
-                  className="w-full bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors font-medium"
-                >
-                  Load URL List
-                </button>
-              </div>
+            );
+        };
 
-              {/* Sort/Search */}
-              <div className="flex items-center gap-2">
-                <div className="relative flex-grow">
-                  <Search className="absolute left-2 top-2.5 text-slate-400" size={14} />
-                  <input 
-                    type="text" 
-                    placeholder="Search list..." 
-                    className="w-full pl-8 pr-2 py-1.5 text-sm border rounded-md"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                  />
-                </div>
-                <button onClick={sortAlphabetical} className="p-1.5 border rounded hover:bg-slate-50" title="Sort A-Z">
-                  <SortAsc size={16} />
-                </button>
-                <button onClick={groupByDomain} className="p-1.5 border rounded hover:bg-slate-50" title="Group by Domain">
-                  <ExternalLink size={16} />
-                </button>
-              </div>
-            </div>
+        const App = () => {
+            const [items, setItems] = useState([]);
+            const [originalHeaders, setOriginalHeaders] = useState([]);
+            const [metaRows, setMetaRows] = useState([]);
+            const [currentIndex, setCurrentIndex] = useState(0);
+            const [searchTerm, setSearchTerm] = useState('');
+            const [auditSearchTerm, setAuditSearchTerm] = useState('Orbitrap Exploris, Excedion');
+            const [sidebarOpen, setSidebarOpen] = useState(true);
 
-            {/* URL List */}
-            <div className="flex-grow overflow-y-auto p-2 space-y-1 bg-slate-50">
-              {sortedItems.length === 0 && (
-                <div className="text-center py-10 text-slate-400 text-sm">
-                  No URLs loaded yet.
-                </div>
-              )}
-              {sortedItems.map((item, index) => {
-                const originalIndex = items.findIndex(i => i.id === item.id);
-                return (
-                  <div 
-                    key={item.id}
-                    onClick={() => setCurrentIndex(originalIndex)}
-                    className={`group flex items-center justify-between p-2 rounded-md cursor-pointer border transition-all ${
-                      currentIndex === originalIndex 
-                        ? 'bg-blue-50 border-blue-200 ring-1 ring-blue-200' 
-                        : 'bg-white border-transparent hover:border-slate-300'
-                    }`}
-                  >
-                    <div className="flex flex-col min-w-0 pr-2">
-                      <span className={`text-xs font-mono truncate ${currentIndex === originalIndex ? 'text-blue-700' : 'text-slate-600'}`}>
-                        {item.url}
-                      </span>
-                      {item.status !== 'pending' && (
-                        <span className={`text-[10px] uppercase font-bold mt-1 ${item.status === 'yes' ? 'text-green-600' : 'text-red-600'}`}>
-                          {item.status}
-                        </span>
-                      )}
+            const ACTION_COL_NAME = "Action: Add Orbitrap IUS Yes or No";
+
+            const parseCSVLine = (line) => {
+                const result = [];
+                let cur = '';
+                let inQuotes = false;
+                for (let i = 0; i < line.length; i++) {
+                    const char = line[i];
+                    if (char === '"') {
+                        if (inQuotes && line[i + 1] === '"') {
+                            cur += '"'; i++;
+                        } else {
+                            inQuotes = !inQuotes;
+                        }
+                    } else if (char === ',' && !inQuotes) {
+                        result.push(cur.trim());
+                        cur = '';
+                    } else {
+                        cur += char;
+                    }
+                }
+                result.push(cur.trim());
+                return result;
+            };
+
+            const handleFileUpload = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const text = event.target.result;
+                    const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
+                    let headerIdx = lines.findIndex(line => line.toLowerCase().includes('url') && line.toLowerCase().includes('title'));
+                    if (headerIdx === -1) return;
+
+                    const headers = parseCSVLine(lines[headerIdx]);
+                    if (!headers.includes(ACTION_COL_NAME)) headers.push(ACTION_COL_NAME);
+
+                    const meta = lines.slice(0, headerIdx);
+                    const dataRows = lines.slice(headerIdx + 1);
+
+                    const newItems = dataRows.map((line, index) => {
+                        const values = parseCSVLine(line);
+                        const rowData = {};
+                        headers.forEach((h, i) => rowData[h] = values[i] || '');
+                        const existingStatus = rowData[ACTION_COL_NAME]?.toLowerCase();
+                        return {
+                            id: Date.now() + index,
+                            url: rowData['URL'] || '',
+                            status: existingStatus === 'yes' ? 'yes' : existingStatus === 'no' ? 'no' : 'pending',
+                            originalData: rowData
+                        };
+                    }).filter(item => item.url);
+
+                    setMetaRows(meta);
+                    setOriginalHeaders(headers);
+                    setItems(newItems);
+                    setCurrentIndex(0);
+                };
+                reader.readAsText(file);
+            };
+
+            const markStatus = (id, status) => {
+                setItems(prev => prev.map(item => item.id === id ? { ...item, status } : item));
+                if (items[currentIndex]?.id === id && currentIndex < items.length - 1) {
+                    setCurrentIndex(currentIndex + 1);
+                }
+            };
+
+            const exportCSV = () => {
+                if (items.length === 0) return;
+                const csvRows = [...metaRows];
+                csvRows.push(originalHeaders.map(h => `"${h}"`).join(','));
+                items.forEach(item => {
+                    const rowValues = originalHeaders.map(h => {
+                        if (h === ACTION_COL_NAME) return item.status === 'yes' ? '"Yes"' : item.status === 'no' ? '"No"' : '""';
+                        return `"${(item.originalData[h] || '').replace(/"/g, '""')}"`;
+                    });
+                    csvRows.push(rowValues.join(','));
+                });
+                const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+                const link = document.createElement("a");
+                link.href = URL.createObjectURL(blob);
+                link.setAttribute("download", `audit_results_${new Date().toISOString().split('T')[0]}.csv`);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            };
+
+            const filteredItems = useMemo(() => {
+                return items.filter(item => item.url.toLowerCase().includes(searchTerm.toLowerCase()));
+            }, [items, searchTerm]);
+
+            const currentItem = items[currentIndex];
+
+            return (
+                <div className="flex h-screen w-full bg-slate-50 overflow-hidden text-slate-900 text-sm">
+                    {/* Sidebar */}
+                    <div className={`${sidebarOpen ? 'w-1/3 min-w-[320px]' : 'w-12'} flex flex-col border-r bg-white transition-all duration-300 relative shrink-0`}>
+                        <button 
+                            onClick={() => setSidebarOpen(!sidebarOpen)}
+                            className="absolute -right-3 top-12 bg-white border rounded-full p-1 z-20 hover:bg-slate-100 shadow-md"
+                        >
+                            <Icon name={sidebarOpen ? "ChevronLeft" : "ChevronRight"} size={16} />
+                        </button>
+
+                        {sidebarOpen && (
+                            <div className="flex flex-col h-full">
+                                <div className="p-4 border-b space-y-4 bg-white">
+                                    <div className="flex items-center justify-between">
+                                        <h1 className="text-xl font-bold flex items-center gap-2">
+                                            <Icon name="LayoutGrid" className="text-blue-600" /> Auditor
+                                        </h1>
+                                        <div className="flex gap-1">
+                                            <button onClick={exportCSV} className="p-2 hover:bg-green-50 text-green-700 rounded-md transition-colors" title="Export CSV">
+                                                <Icon name="Download" size={20} />
+                                            </button>
+                                            <button onClick={() => { if(confirm('Clear all?')) setItems([]); }} className="p-2 hover:bg-red-50 text-red-600 rounded-md transition-colors" title="Clear All">
+                                                <Icon name="Trash2" size={20} />
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <label className="flex items-center justify-center gap-2 w-full py-2 border-2 border-dashed border-slate-200 rounded-lg hover:border-blue-400 hover:bg-blue-50 cursor-pointer transition-all">
+                                        <Icon name="Upload" size={16} className="text-slate-400" />
+                                        <span className="text-xs font-medium text-slate-600">Upload SiteImprove CSV</span>
+                                        <input type="file" accept=".csv" onChange={handleFileUpload} className="hidden" />
+                                    </label>
+
+                                    <div className="relative">
+                                        <Icon name="Search" className="absolute left-2 top-2 text-slate-400" size={14} />
+                                        <input 
+                                            type="text" 
+                                            placeholder="Filter list..." 
+                                            className="w-full pl-8 pr-2 py-1 text-xs border rounded-md"
+                                            value={searchTerm}
+                                            onChange={(e) => setSearchTerm(e.target.value)}
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="flex-grow overflow-y-auto p-2 space-y-1 bg-slate-50">
+                                    {filteredItems.map((item, idx) => {
+                                        const globalIdx = items.findIndex(i => i.id === item.id);
+                                        return (
+                                            <div 
+                                                key={item.id}
+                                                onClick={() => setCurrentIndex(globalIdx)}
+                                                className={`group flex items-center justify-between p-2 rounded-md cursor-pointer border transition-all ${
+                                                    currentIndex === globalIdx ? 'bg-blue-50 border-blue-200 shadow-sm' : 'bg-white border-transparent hover:border-slate-300'
+                                                }`}
+                                            >
+                                                <div className="flex flex-col min-w-0 pr-2">
+                                                    <span className="text-[10px] text-slate-400 font-bold uppercase truncate">
+                                                        {item.originalData['Title'] || 'Untitled'}
+                                                    </span>
+                                                    <span className={`text-[11px] font-mono truncate ${currentIndex === globalIdx ? 'text-blue-700' : 'text-slate-500'}`}>
+                                                        {item.url}
+                                                    </span>
+                                                </div>
+                                                {item.status !== 'pending' && (
+                                                    <span className={`shrink-0 h-5 w-5 flex items-center justify-center rounded-full text-[10px] font-bold ${
+                                                        item.status === 'yes' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                                                    }`}>
+                                                        {item.status === 'yes' ? 'Y' : 'N'}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
                     </div>
-                    <div className="flex items-center gap-1 shrink-0 opacity-40 group-hover:opacity-100 transition-opacity">
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); markStatus(item.id, 'yes'); }}
-                        className={`p-1 rounded-full hover:bg-green-100 ${item.status === 'yes' ? 'text-green-600 opacity-100' : 'text-slate-400'}`}
-                      >
-                        <CheckCircle2 size={16} />
-                      </button>
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); markStatus(item.id, 'no'); }}
-                        className={`p-1 rounded-full hover:bg-red-100 ${item.status === 'no' ? 'text-red-600 opacity-100' : 'text-slate-400'}`}
-                      >
-                        <XCircle size={16} />
-                      </button>
+
+                    {/* Main Viewer */}
+                    <div className="flex-grow flex flex-col bg-slate-100 min-w-0">
+                        {!currentItem ? (
+                            <div className="flex-grow flex items-center justify-center text-slate-400 flex-col gap-4">
+                                <div className="p-8 bg-white rounded-2xl shadow-xl flex flex-col items-center gap-4">
+                                    <Icon name="FileText" size={48} className="text-blue-100" />
+                                    <div className="text-center">
+                                        <p className="text-slate-600 font-bold">Audit Queue Empty</p>
+                                        <p className="text-slate-400 text-sm">Upload your file to begin scanning.</p>
+                                    </div>
+                                </div>
+                            </div>
+                        ) : (
+                            <>
+                                <div className="bg-white border-b p-3 flex items-center justify-between shadow-sm z-10">
+                                    <div className="flex items-center gap-4 min-w-0 flex-grow">
+                                        <div className="flex items-center gap-1 shrink-0">
+                                            <button onClick={() => setCurrentIndex(Math.max(0, currentIndex - 1))} className="p-2 hover:bg-slate-100 rounded">
+                                                <Icon name="ChevronLeft" size={20} />
+                                            </button>
+                                            <span className="text-xs font-bold text-slate-400 w-12 text-center">
+                                                {currentIndex + 1} / {items.length}
+                                            </span>
+                                            <button onClick={() => setCurrentIndex(Math.min(items.length - 1, currentIndex + 1))} className="p-2 hover:bg-slate-100 rounded">
+                                                <Icon name="ChevronRight" size={20} />
+                                            </button>
+                                        </div>
+                                        
+                                        <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg max-w-sm flex-grow">
+                                            <Icon name="Info" size={14} className="text-amber-500 shrink-0" />
+                                            <div className="flex flex-col flex-grow min-w-0">
+                                                <span className="text-[9px] font-bold text-amber-600 uppercase tracking-tighter">Scanning for:</span>
+                                                <input 
+                                                    type="text" 
+                                                    value={auditSearchTerm}
+                                                    onChange={(e) => setAuditSearchTerm(e.target.value)}
+                                                    className="bg-transparent text-xs font-semibold text-amber-900 border-none focus:outline-none w-full p-0 leading-tight"
+                                                    placeholder="Enter search terms..."
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-4 shrink-0 ml-4 border-l pl-4">
+                                        <div className="flex flex-col items-end mr-2 hidden md:flex">
+                                           <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Orbitrap IUS?</span>
+                                           <span className="text-[9px] text-slate-400 italic">Auto-advances</span>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <button 
+                                                onClick={() => markStatus(currentItem.id, 'yes')}
+                                                className={`flex items-center gap-2 px-6 md:px-8 py-2 md:py-3 rounded-xl font-black transition-all shadow-md active:scale-95 ${
+                                                    currentItem.status === 'yes' ? 'bg-green-600 text-white ring-4 ring-green-100' : 'bg-white text-green-700 border-2 border-green-600 hover:bg-green-50'
+                                                }`}
+                                            >
+                                                <Icon name="CheckCircle2" size={18} /> <span className="hidden sm:inline">YES</span>
+                                            </button>
+                                            <button 
+                                                onClick={() => markStatus(currentItem.id, 'no')}
+                                                className={`flex items-center gap-2 px-6 md:px-8 py-2 md:py-3 rounded-xl font-black transition-all shadow-md active:scale-95 ${
+                                                    currentItem.status === 'no' ? 'bg-red-600 text-white ring-4 ring-red-100' : 'bg-white text-red-700 border-2 border-red-600 hover:bg-red-50'
+                                                }`}
+                                            >
+                                                <Icon name="XCircle" size={18} /> <span className="hidden sm:inline">NO</span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="bg-slate-800 text-white px-4 py-1.5 flex items-center justify-between">
+                                    <div className="flex items-center gap-3 overflow-hidden min-w-0">
+                                        <span className="text-[10px] font-bold text-slate-400 uppercase shrink-0">Current Page:</span>
+                                        <span className="text-xs font-medium truncate italic text-slate-300">{currentItem.originalData['Title']}</span>
+                                    </div>
+                                    <div className="flex items-center gap-3 shrink-0 ml-4">
+                                        <span className="text-[10px] font-mono text-slate-400 truncate max-w-[200px] hidden sm:inline">{currentItem.url}</span>
+                                        <a href={currentItem.url} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300">
+                                            <Icon name="ExternalLink" size={14} />
+                                        </a>
+                                    </div>
+                                </div>
+
+                                <div className="flex-grow bg-white">
+                                    <iframe 
+                                        key={currentItem.id}
+                                        src={currentItem.url}
+                                        className="w-full h-full border-none"
+                                        title="Audit View"
+                                    />
+                                </div>
+                            </>
+                        )}
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Stats */}
-            <div className="p-3 border-t bg-white text-xs text-slate-500 flex justify-between">
-              <span>Total: {items.length}</span>
-              <span>Yes: {items.filter(i => i.status === 'yes').length}</span>
-              <span>No: {items.filter(i => i.status === 'no').length}</span>
-              <span>Progress: {items.length > 0 ? Math.round((items.filter(i => i.status !== 'pending').length / items.length) * 100) : 0}%</span>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Main Content: Viewer */}
-      <div className="flex-grow flex flex-col bg-slate-200 relative">
-        {!currentItem ? (
-          <div className="flex-grow flex items-center justify-center text-slate-400 flex-col gap-4">
-            <FileText size={48} strokeWidth={1} />
-            <p className="text-lg">Paste a list of URLs to get started</p>
-          </div>
-        ) : (
-          <>
-            {/* Browser Header/Toolbar */}
-            <div className="bg-white border-b p-3 flex items-center justify-between shadow-sm z-10">
-              <div className="flex items-center gap-4 flex-grow">
-                <div className="flex items-center gap-1">
-                  <button 
-                    disabled={currentIndex === 0}
-                    onClick={() => setCurrentIndex(currentIndex - 1)}
-                    className="p-1.5 hover:bg-slate-100 rounded disabled:opacity-30"
-                  >
-                    <ChevronLeft size={20} />
-                  </button>
-                  <button 
-                    disabled={currentIndex === items.length - 1}
-                    onClick={() => setCurrentIndex(currentIndex + 1)}
-                    className="p-1.5 hover:bg-slate-100 rounded disabled:opacity-30"
-                  >
-                    <ChevronRight size={20} />
-                  </button>
                 </div>
-                <div className="flex-grow max-w-2xl bg-slate-100 px-3 py-1.5 rounded-full text-sm font-mono truncate border flex items-center justify-between">
-                  <span className="truncate">{currentItem.url}</span>
-                  <a href={currentItem.url} target="_blank" rel="noreferrer" className="ml-2 text-blue-600 hover:text-blue-800 shrink-0">
-                    <ExternalLink size={14} />
-                  </a>
-                </div>
-              </div>
+            );
+        };
 
-              {/* Decision Buttons */}
-              <div className="flex items-center gap-3 ml-4">
-                <span className="text-sm font-semibold text-slate-500 mr-2">ADD ORBITRAP IUS?</span>
-                <button 
-                  onClick={() => markStatus(currentItem.id, 'yes')}
-                  className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold transition-all shadow-md active:scale-95 ${
-                    currentItem.status === 'yes' 
-                    ? 'bg-green-600 text-white ring-4 ring-green-100' 
-                    : 'bg-white text-green-700 border-2 border-green-600 hover:bg-green-50'
-                  }`}
-                >
-                  <CheckCircle2 size={20} /> YES
-                </button>
-                <button 
-                  onClick={() => markStatus(currentItem.id, 'no')}
-                  className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold transition-all shadow-md active:scale-95 ${
-                    currentItem.status === 'no' 
-                    ? 'bg-red-600 text-white ring-4 ring-red-100' 
-                    : 'bg-white text-red-700 border-2 border-red-600 hover:bg-red-50'
-                  }`}
-                >
-                  <XCircle size={20} /> NO
-                </button>
-              </div>
-            </div>
-
-            {/* Iframe Viewer */}
-            <div className="flex-grow relative bg-white">
-              <iframe 
-                key={currentItem.id} // Forces reload on change
-                src={currentItem.url}
-                className="w-full h-full border-none"
-                title="Page Viewer"
-              />
-              {/* Overlay for sites that block iframes */}
-              <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center bg-slate-50 opacity-0 hover:opacity-10 transition-opacity">
-                <p className="bg-white p-4 rounded shadow-lg border text-sm pointer-events-auto">
-                  If the page does not load, it may block embed previews. 
-                  <a href={currentItem.url} target="_blank" rel="noreferrer" className="text-blue-600 ml-2 underline">Open in new tab</a>
-                </p>
-              </div>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-};
-
-export default App;
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
