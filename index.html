@@ -1,0 +1,313 @@
+import React, { useState, useMemo, useEffect } from 'react';
+import { 
+  FileText, 
+  Download, 
+  Trash2, 
+  ExternalLink, 
+  CheckCircle2, 
+  XCircle, 
+  SortAsc, 
+  Search,
+  LayoutGrid,
+  ChevronRight,
+  ChevronLeft
+} from 'lucide-react';
+
+const App = () => {
+  const [urlInput, setUrlInput] = useState('');
+  const [items, setItems] = useState([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  // Initialize data from paste
+  const handleImport = () => {
+    const lines = urlInput.split(/\n/).filter(line => line.trim() !== '');
+    const newItems = lines.map((url, index) => ({
+      id: Date.now() + index,
+      url: url.trim().startsWith('http') ? url.trim() : `https://${url.trim()}`,
+      status: 'pending', // 'yes', 'no', 'pending'
+      timestamp: null
+    }));
+    setItems([...items, ...newItems]);
+    setUrlInput('');
+  };
+
+  // Actions
+  const markStatus = (id, status) => {
+    setItems(prev => prev.map(item => 
+      item.id === id ? { ...item, status, timestamp: new Date().toISOString() } : item
+    ));
+    // Auto-advance if marking the current one
+    if (items[currentIndex]?.id === id && currentIndex < items.length - 1) {
+      setCurrentIndex(currentIndex + 1);
+    }
+  };
+
+  const clearAll = () => {
+    if (confirm('Are you sure you want to clear all data?')) {
+      setItems([]);
+      setCurrentIndex(0);
+    }
+  };
+
+  // Sorting / Filtering
+  const sortedItems = useMemo(() => {
+    let result = [...items];
+    if (searchTerm) {
+      result = result.filter(item => item.url.toLowerCase().includes(searchTerm.toLowerCase()));
+    }
+    return result;
+  }, [items, searchTerm]);
+
+  const sortAlphabetical = () => {
+    const sorted = [...items].sort((a, b) => a.url.localeCompare(b.url));
+    setItems(sorted);
+  };
+
+  const groupByDomain = () => {
+    const sorted = [...items].sort((a, b) => {
+      try {
+        const urlA = new URL(a.url).hostname;
+        const urlB = new URL(b.url).hostname;
+        return urlA.localeCompare(urlB);
+      } catch (e) {
+        return a.url.localeCompare(b.url);
+      }
+    });
+    setItems(sorted);
+  };
+
+  // Export to CSV
+  const exportCSV = () => {
+    const header = "URL,Action: Add Orbitrap IUS Yes/No\n";
+    const rows = items.map(item => {
+      const statusLabel = item.status === 'yes' ? 'Yes' : item.status === 'no' ? 'No' : '';
+      return `"${item.url}","${statusLabel}"`;
+    }).join("\n");
+    
+    const blob = new Blob([header + rows], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute("download", `url_audit_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const currentItem = items[currentIndex];
+
+  return (
+    <div className="flex h-screen w-full bg-slate-50 overflow-hidden font-sans text-slate-900">
+      {/* Sidebar: Controls & List */}
+      <div className={`${sidebarOpen ? 'w-1/3' : 'w-12'} flex flex-col border-r bg-white transition-all duration-300 relative`}>
+        <button 
+          onClick={() => setSidebarOpen(!sidebarOpen)}
+          className="absolute -right-3 top-1/2 transform -translate-y-1/2 bg-white border rounded-full p-1 z-10 hover:bg-slate-100 shadow-sm"
+        >
+          {sidebarOpen ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
+        </button>
+
+        {sidebarOpen && (
+          <div className="flex flex-col h-full">
+            {/* Header */}
+            <div className="p-4 border-b space-y-4">
+              <div className="flex items-center justify-between">
+                <h1 className="text-xl font-bold flex items-center gap-2">
+                  <LayoutGrid className="text-blue-600" /> Auditor
+                </h1>
+                <div className="flex gap-2">
+                  <button onClick={exportCSV} className="p-2 hover:bg-green-50 text-green-700 rounded-md transition-colors" title="Export CSV">
+                    <Download size={20} />
+                  </button>
+                  <button onClick={clearAll} className="p-2 hover:bg-red-50 text-red-600 rounded-md transition-colors" title="Clear List">
+                    <Trash2 size={20} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Paste Input */}
+              <div className="space-y-2">
+                <textarea
+                  placeholder="Paste URLs here (one per line)..."
+                  className="w-full h-24 p-2 text-sm border rounded-md focus:ring-2 focus:ring-blue-500 focus:outline-none bg-slate-50"
+                  value={urlInput}
+                  onChange={(e) => setUrlInput(e.target.value)}
+                />
+                <button 
+                  onClick={handleImport}
+                  disabled={!urlInput.trim()}
+                  className="w-full bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 transition-colors font-medium"
+                >
+                  Load URL List
+                </button>
+              </div>
+
+              {/* Sort/Search */}
+              <div className="flex items-center gap-2">
+                <div className="relative flex-grow">
+                  <Search className="absolute left-2 top-2.5 text-slate-400" size={14} />
+                  <input 
+                    type="text" 
+                    placeholder="Search list..." 
+                    className="w-full pl-8 pr-2 py-1.5 text-sm border rounded-md"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                  />
+                </div>
+                <button onClick={sortAlphabetical} className="p-1.5 border rounded hover:bg-slate-50" title="Sort A-Z">
+                  <SortAsc size={16} />
+                </button>
+                <button onClick={groupByDomain} className="p-1.5 border rounded hover:bg-slate-50" title="Group by Domain">
+                  <ExternalLink size={16} />
+                </button>
+              </div>
+            </div>
+
+            {/* URL List */}
+            <div className="flex-grow overflow-y-auto p-2 space-y-1 bg-slate-50">
+              {sortedItems.length === 0 && (
+                <div className="text-center py-10 text-slate-400 text-sm">
+                  No URLs loaded yet.
+                </div>
+              )}
+              {sortedItems.map((item, index) => {
+                const originalIndex = items.findIndex(i => i.id === item.id);
+                return (
+                  <div 
+                    key={item.id}
+                    onClick={() => setCurrentIndex(originalIndex)}
+                    className={`group flex items-center justify-between p-2 rounded-md cursor-pointer border transition-all ${
+                      currentIndex === originalIndex 
+                        ? 'bg-blue-50 border-blue-200 ring-1 ring-blue-200' 
+                        : 'bg-white border-transparent hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="flex flex-col min-w-0 pr-2">
+                      <span className={`text-xs font-mono truncate ${currentIndex === originalIndex ? 'text-blue-700' : 'text-slate-600'}`}>
+                        {item.url}
+                      </span>
+                      {item.status !== 'pending' && (
+                        <span className={`text-[10px] uppercase font-bold mt-1 ${item.status === 'yes' ? 'text-green-600' : 'text-red-600'}`}>
+                          {item.status}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0 opacity-40 group-hover:opacity-100 transition-opacity">
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); markStatus(item.id, 'yes'); }}
+                        className={`p-1 rounded-full hover:bg-green-100 ${item.status === 'yes' ? 'text-green-600 opacity-100' : 'text-slate-400'}`}
+                      >
+                        <CheckCircle2 size={16} />
+                      </button>
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); markStatus(item.id, 'no'); }}
+                        className={`p-1 rounded-full hover:bg-red-100 ${item.status === 'no' ? 'text-red-600 opacity-100' : 'text-slate-400'}`}
+                      >
+                        <XCircle size={16} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Stats */}
+            <div className="p-3 border-t bg-white text-xs text-slate-500 flex justify-between">
+              <span>Total: {items.length}</span>
+              <span>Yes: {items.filter(i => i.status === 'yes').length}</span>
+              <span>No: {items.filter(i => i.status === 'no').length}</span>
+              <span>Progress: {items.length > 0 ? Math.round((items.filter(i => i.status !== 'pending').length / items.length) * 100) : 0}%</span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Main Content: Viewer */}
+      <div className="flex-grow flex flex-col bg-slate-200 relative">
+        {!currentItem ? (
+          <div className="flex-grow flex items-center justify-center text-slate-400 flex-col gap-4">
+            <FileText size={48} strokeWidth={1} />
+            <p className="text-lg">Paste a list of URLs to get started</p>
+          </div>
+        ) : (
+          <>
+            {/* Browser Header/Toolbar */}
+            <div className="bg-white border-b p-3 flex items-center justify-between shadow-sm z-10">
+              <div className="flex items-center gap-4 flex-grow">
+                <div className="flex items-center gap-1">
+                  <button 
+                    disabled={currentIndex === 0}
+                    onClick={() => setCurrentIndex(currentIndex - 1)}
+                    className="p-1.5 hover:bg-slate-100 rounded disabled:opacity-30"
+                  >
+                    <ChevronLeft size={20} />
+                  </button>
+                  <button 
+                    disabled={currentIndex === items.length - 1}
+                    onClick={() => setCurrentIndex(currentIndex + 1)}
+                    className="p-1.5 hover:bg-slate-100 rounded disabled:opacity-30"
+                  >
+                    <ChevronRight size={20} />
+                  </button>
+                </div>
+                <div className="flex-grow max-w-2xl bg-slate-100 px-3 py-1.5 rounded-full text-sm font-mono truncate border flex items-center justify-between">
+                  <span className="truncate">{currentItem.url}</span>
+                  <a href={currentItem.url} target="_blank" rel="noreferrer" className="ml-2 text-blue-600 hover:text-blue-800 shrink-0">
+                    <ExternalLink size={14} />
+                  </a>
+                </div>
+              </div>
+
+              {/* Decision Buttons */}
+              <div className="flex items-center gap-3 ml-4">
+                <span className="text-sm font-semibold text-slate-500 mr-2">ADD ORBITRAP IUS?</span>
+                <button 
+                  onClick={() => markStatus(currentItem.id, 'yes')}
+                  className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold transition-all shadow-md active:scale-95 ${
+                    currentItem.status === 'yes' 
+                    ? 'bg-green-600 text-white ring-4 ring-green-100' 
+                    : 'bg-white text-green-700 border-2 border-green-600 hover:bg-green-50'
+                  }`}
+                >
+                  <CheckCircle2 size={20} /> YES
+                </button>
+                <button 
+                  onClick={() => markStatus(currentItem.id, 'no')}
+                  className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold transition-all shadow-md active:scale-95 ${
+                    currentItem.status === 'no' 
+                    ? 'bg-red-600 text-white ring-4 ring-red-100' 
+                    : 'bg-white text-red-700 border-2 border-red-600 hover:bg-red-50'
+                  }`}
+                >
+                  <XCircle size={20} /> NO
+                </button>
+              </div>
+            </div>
+
+            {/* Iframe Viewer */}
+            <div className="flex-grow relative bg-white">
+              <iframe 
+                key={currentItem.id} // Forces reload on change
+                src={currentItem.url}
+                className="w-full h-full border-none"
+                title="Page Viewer"
+              />
+              {/* Overlay for sites that block iframes */}
+              <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center bg-slate-50 opacity-0 hover:opacity-10 transition-opacity">
+                <p className="bg-white p-4 rounded shadow-lg border text-sm pointer-events-auto">
+                  If the page does not load, it may block embed previews. 
+                  <a href={currentItem.url} target="_blank" rel="noreferrer" className="text-blue-600 ml-2 underline">Open in new tab</a>
+                </p>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default App;
