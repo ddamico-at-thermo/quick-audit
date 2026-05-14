@@ -15,23 +15,24 @@
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
         body { font-family: 'Inter', sans-serif; }
-        iframe { background: white; }
-        .kbd { 
-            background: #f1f5f9;
-            border: 1px solid #cbd5e1;
-            border-radius: 4px;
-            padding: 1px 4px;
-            font-size: 10px;
-            font-family: monospace;
-            box-shadow: 0 1px 0 #cbd5e1;
+        /* Custom scroll behavior for the viewer */
+        #audit-viewer-container {
+            scroll-behavior: smooth;
         }
+        .autoscroll-active {
+            scroll-behavior: auto !important; /* Force linear feel for smooth auto-scrolling */
+        }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
     </style>
 </head>
 <body class="bg-slate-50 overflow-hidden">
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useMemo, useEffect } = React;
+        const { useState, useMemo, useEffect, useRef, useCallback } = React;
 
         const Icon = ({ name, size = 18, className = "" }) => {
             const [svg, setSvg] = useState("");
@@ -77,8 +78,24 @@
             const [workflowMode, setWorkflowMode] = useState('decision');
             const [pastedUrls, setPastedUrls] = useState('');
 
+            // --- Voice & Scroll State ---
+            const [isListening, setIsListening] = useState(false);
+            const [voiceFeedback, setVoiceFeedback] = useState('');
+            const [isAutoScrolling, setIsAutoScrolling] = useState(false);
+            const recognitionRef = useRef(null);
+            const scrollContainerRef = useRef(null);
+            const autoScrollIntervalRef = useRef(null);
+
             const ACTION_COL_NAME = "Action: Add Orbitrap IUS Yes or No";
             const NOTES_COL_NAME = "Notes";
+
+            const stopAutoScroll = useCallback(() => {
+                if (autoScrollIntervalRef.current) {
+                    clearInterval(autoScrollIntervalRef.current);
+                    autoScrollIntervalRef.current = null;
+                }
+                setIsAutoScrolling(false);
+            }, []);
 
             const parseCSVLine = (line) => {
                 const result = [];
@@ -103,51 +120,50 @@
                 return result;
             };
 
+            const processRawCSV = (text) => {
+                const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
+                let headerIdx = lines.findIndex(line => line.toLowerCase().includes('url') && line.toLowerCase().includes('title'));
+                if (headerIdx === -1) return;
+                
+                const headers = parseCSVLine(lines[headerIdx]);
+                if (!headers.includes(ACTION_COL_NAME)) headers.push(ACTION_COL_NAME);
+                if (!headers.includes(NOTES_COL_NAME)) headers.push(NOTES_COL_NAME);
+                
+                const meta = lines.slice(0, headerIdx);
+                const dataRows = lines.slice(headerIdx + 1);
+                
+                const newItems = dataRows.map((line, index) => {
+                    const values = parseCSVLine(line);
+                    const rowData = {};
+                    headers.forEach((h, i) => rowData[h] = values[i] || '');
+                    const existingStatus = rowData[ACTION_COL_NAME]?.toLowerCase();
+                    return {
+                        id: Date.now() + index,
+                        title: rowData['Title'] || 'No Title',
+                        url: rowData['URL'] || '',
+                        status: existingStatus === 'yes' ? 'yes' : existingStatus === 'no' ? 'no' : 'pending',
+                        notes: rowData[NOTES_COL_NAME] || '',
+                        originalData: rowData
+                    };
+                }).filter(item => item.url);
+
+                setMetaRows(meta);
+                setOriginalHeaders(headers);
+                setItems(newItems);
+                setCurrentIndex(0);
+            };
+
             const handleFileUpload = (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
-
                 const reader = new FileReader();
-                reader.onload = (event) => {
-                    const text = event.target.result;
-                    const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
-                    let headerIdx = lines.findIndex(line => line.toLowerCase().includes('url') && line.toLowerCase().includes('title'));
-                    if (headerIdx === -1) return;
-
-                    const headers = parseCSVLine(lines[headerIdx]);
-                    if (!headers.includes(ACTION_COL_NAME)) headers.push(ACTION_COL_NAME);
-                    if (!headers.includes(NOTES_COL_NAME)) headers.push(NOTES_COL_NAME);
-
-                    const meta = lines.slice(0, headerIdx);
-                    const dataRows = lines.slice(headerIdx + 1);
-
-                    const newItems = dataRows.map((line, index) => {
-                        const values = parseCSVLine(line);
-                        const rowData = {};
-                        headers.forEach((h, i) => rowData[h] = values[i] || '');
-                        const existingStatus = rowData[ACTION_COL_NAME]?.toLowerCase();
-                        return {
-                            id: Date.now() + index,
-                            title: rowData['Title'] || 'No Title',
-                            url: rowData['URL'] || '',
-                            status: existingStatus === 'yes' ? 'yes' : existingStatus === 'no' ? 'no' : 'pending',
-                            notes: rowData[NOTES_COL_NAME] || '',
-                            originalData: rowData
-                        };
-                    }).filter(item => item.url);
-
-                    setMetaRows(meta);
-                    setOriginalHeaders(headers);
-                    setItems(newItems);
-                    setCurrentIndex(0);
-                };
+                reader.onload = (event) => processRawCSV(event.target.result);
                 reader.readAsText(file);
             };
 
             const handlePasteSubmit = () => {
                 const urls = pastedUrls.split(/\r?\n/).map(u => u.trim()).filter(u => u !== '');
                 if (urls.length === 0) return;
-
                 const headers = ["Title", "URL", ACTION_COL_NAME, NOTES_COL_NAME];
                 const newItems = urls.map((url, index) => ({
                     id: Date.now() + index,
@@ -157,7 +173,6 @@
                     notes: '',
                     originalData: { "Title": url, "URL": url }
                 }));
-
                 setMetaRows([]);
                 setOriginalHeaders(headers);
                 setItems(newItems);
@@ -167,15 +182,105 @@
             };
 
             const markStatus = (id, status) => {
+                stopAutoScroll();
                 setItems(prev => prev.map(item => item.id === id ? { ...item, status } : item));
                 if (items[currentIndex]?.id === id && currentIndex < items.length - 1) {
                     setCurrentIndex(currentIndex + 1);
+                    if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
                 }
             };
 
             const updateNotes = (id, notes) => {
                 setItems(prev => prev.map(item => item.id === id ? { ...item, notes } : item));
             };
+
+            const handleVoiceCommand = useCallback((originalTranscript) => {
+                const currentItem = items[currentIndex];
+                if (!currentItem) return;
+
+                const transcript = originalTranscript.trim().toLowerCase();
+                let feedback = `Heard: "${originalTranscript}"`;
+                const container = scrollContainerRef.current;
+
+                if (transcript === 'mark yes' || transcript === 'yes') {
+                    markStatus(currentItem.id, 'yes');
+                    feedback = 'Command: Marked YES';
+                } else if (transcript === 'mark no' || transcript === 'no') {
+                    markStatus(currentItem.id, 'no');
+                    feedback = 'Command: Marked NO';
+                } else if (transcript === 'next' || transcript === 'go next' || transcript === 'next item') {
+                    stopAutoScroll();
+                    if (currentIndex < items.length - 1) {
+                        setCurrentIndex(currentIndex + 1);
+                        if (container) container.scrollTop = 0;
+                        feedback = 'Command: Next Item';
+                    }
+                } else if (transcript === 'previous' || transcript === 'go back') {
+                    stopAutoScroll();
+                    if (currentIndex > 0) {
+                        setCurrentIndex(currentIndex - 1);
+                        if (container) container.scrollTop = 0;
+                        feedback = 'Command: Previous Item';
+                    }
+                } else if (transcript === 'scroll' || transcript.includes('start scrolling')) {
+                    stopAutoScroll();
+                    setIsAutoScrolling(true);
+                    feedback = 'Auto-scroll Started';
+                    autoScrollIntervalRef.current = setInterval(() => {
+                        if (container) container.scrollTop += 1.5;
+                    }, 16);
+                } else if (transcript === 'stop' || transcript === 'pause' || transcript === 'stop scrolling') {
+                    stopAutoScroll();
+                    feedback = 'Scrolling Stopped';
+                } else if (transcript.includes('scroll down') || transcript === 'down') {
+                    stopAutoScroll();
+                    if (container) container.scrollTop += 600;
+                    feedback = 'Scrolling Down';
+                } else if (transcript.includes('scroll up') || transcript === 'up') {
+                    stopAutoScroll();
+                    if (container) container.scrollTop -= 600;
+                    feedback = 'Scrolling Up';
+                } else if (workflowMode === 'notes') {
+                    const currentNotes = currentItem.notes || '';
+                    const newNotes = currentNotes + (currentNotes ? ' ' : '') + originalTranscript;
+                    updateNotes(currentItem.id, newNotes);
+                    feedback = 'Dictated note.';
+                }
+
+                setVoiceFeedback(feedback);
+                setTimeout(() => setVoiceFeedback(''), 3000);
+            }, [items, currentIndex, workflowMode, stopAutoScroll]);
+
+            const commandHandlerRef = useRef(handleVoiceCommand);
+            useEffect(() => { commandHandlerRef.current = handleVoiceCommand; }, [handleVoiceCommand]);
+
+            useEffect(() => {
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                if (!SpeechRecognition) return;
+
+                if (!recognitionRef.current) {
+                    const recognition = new SpeechRecognition();
+                    recognition.continuous = true;
+                    recognition.interimResults = false;
+                    recognition.lang = 'en-US';
+                    recognition.onresult = (event) => {
+                        const last = event.results.length - 1;
+                        commandHandlerRef.current(event.results[last][0].transcript);
+                    };
+                    recognition.onend = () => {
+                        if (isListening) {
+                            try { recognitionRef.current.start(); } catch(e) {}
+                        }
+                    };
+                    recognitionRef.current = recognition;
+                }
+
+                if (isListening) {
+                    try { recognitionRef.current.start(); } catch(e) {}
+                } else {
+                    if (recognitionRef.current) recognitionRef.current.stop();
+                }
+            }, [isListening]);
 
             const exportCSV = () => {
                 if (items.length === 0) return;
@@ -227,7 +332,6 @@
                                         </div>
                                     </div>
 
-                                    {/* Workflow Mode Selector */}
                                     <div className="space-y-1.5">
                                         <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Workflow Mode</label>
                                         <div className="flex bg-slate-100 p-1 rounded-lg">
@@ -240,29 +344,35 @@
                                         </div>
                                     </div>
 
-                                    {/* Setup UI */}
+                                    <div className="space-y-1.5">
+                                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Voice Accessibility</label>
+                                        <button 
+                                            onClick={() => setIsListening(!isListening)}
+                                            className={`w-full flex items-center justify-center gap-2 py-2 rounded-lg font-bold transition-all text-xs ${isListening ? 'bg-red-100 text-red-700 ring-2 ring-red-500 shadow-inner' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                                        >
+                                            <Icon name={isListening ? "Mic" : "MicOff"} size={16} />
+                                            {isListening ? "Voice Active" : "Enable Voice Control"}
+                                        </button>
+                                    </div>
+
                                     <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-3">
                                         <div className="space-y-1">
-                                            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">1. Define Scrutiny Terms</label>
-                                            <div className="flex items-center gap-2 bg-white border rounded px-2 py-1 focus-within:ring-1 focus-within:ring-blue-500">
+                                            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Audit Target</label>
+                                            <div className="flex items-center gap-2 bg-white border rounded px-2 py-1">
                                                 <Icon name="Search" size={12} className="text-slate-400" />
                                                 <input 
                                                     type="text" 
                                                     value={auditSearchTerm} 
                                                     onChange={(e) => setAuditSearchTerm(e.target.value)} 
                                                     className="bg-transparent text-xs w-full focus:outline-none py-1"
-                                                    placeholder="e.g. Orbitrap, Exploris..."
                                                 />
                                             </div>
                                         </div>
-
                                         <div className="space-y-1">
-                                            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">2. Load Audit Targets</label>
                                             <div className="flex bg-slate-200/50 p-1 rounded">
                                                 <button onClick={() => setInputMode('upload')} className={`flex-1 py-1 text-[9px] font-bold uppercase rounded transition-all ${inputMode === 'upload' ? 'bg-white shadow text-slate-800' : 'text-slate-500'}`}>CSV</button>
                                                 <button onClick={() => setInputMode('paste')} className={`flex-1 py-1 text-[9px] font-bold uppercase rounded transition-all ${inputMode === 'paste' ? 'bg-white shadow text-slate-800' : 'text-slate-500'}`}>Paste</button>
                                             </div>
-                                            
                                             {inputMode === 'upload' ? (
                                                 <label className="flex items-center justify-center gap-2 w-full py-2 bg-white border border-dashed border-slate-300 rounded hover:border-blue-400 cursor-pointer">
                                                     <Icon name="Upload" size={12} className="text-slate-400" />
@@ -277,10 +387,9 @@
                                             )}
                                         </div>
                                     </div>
-
                                     <div className="relative">
                                         <Icon name="Filter" className="absolute left-2 top-2 text-slate-400" size={14} />
-                                        <input type="text" placeholder="Filter audit list..." className="w-full pl-8 pr-2 py-1.5 text-xs border rounded-md" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                                        <input type="text" placeholder="Filter list..." className="w-full pl-8 pr-2 py-1.5 text-xs border rounded-md" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
                                     </div>
                                 </div>
                                 <div className="flex-grow overflow-y-auto p-2 space-y-1 bg-slate-50">
@@ -294,7 +403,6 @@
                                                 </div>
                                                 <div className="flex items-center gap-1 shrink-0">
                                                     {item.status !== 'pending' && <span className={`h-5 w-5 flex items-center justify-center rounded-full text-[10px] font-bold ${item.status === 'yes' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{item.status === 'yes' ? 'Y' : 'N'}</span>}
-                                                    {item.notes && <Icon name="MessageSquare" size={10} className="text-blue-400" />}
                                                 </div>
                                             </div>
                                         );
@@ -305,14 +413,51 @@
                     </div>
 
                     {/* Main Viewer */}
-                    <div className="flex-grow flex flex-col bg-slate-100 min-w-0">
+                    <div className="flex-grow flex flex-col bg-slate-100 min-w-0 relative">
+                        {voiceFeedback && (
+                            <div className="absolute top-16 left-1/2 transform -translate-x-1/2 bg-slate-800/90 text-white px-4 py-2 rounded-full shadow-2xl z-50 text-xs flex items-center gap-2 backdrop-blur-sm pointer-events-none transition-all">
+                                <Icon name="Mic" size={14} className="text-red-400 animate-pulse" />
+                                {voiceFeedback}
+                            </div>
+                        )}
                         {!currentItem ? (
                             <div className="flex-grow flex items-center justify-center text-slate-400 flex-col gap-4">
-                                <div className="p-8 bg-white rounded-2xl shadow-xl flex flex-col items-center gap-4">
-                                    <Icon name="Search" size={48} className="text-slate-100" />
-                                    <div className="text-center">
-                                        <p className="text-slate-600 font-bold">Ready for Audit</p>
-                                        <p className="text-slate-400 text-sm">Define terms and load URLs in the sidebar.</p>
+                                <div className="p-10 bg-white rounded-3xl shadow-2xl flex flex-col items-center gap-6 text-center max-w-md border border-slate-100 animate-in fade-in zoom-in duration-500">
+                                    <div className="p-4 bg-blue-50 rounded-2xl">
+                                        <Icon name="ClipboardList" size={48} className="text-blue-500" />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <h2 className="text-2xl font-black text-slate-800">URL Auditor</h2>
+                                        <p className="text-slate-500 text-sm leading-relaxed px-4">Streamline your page reviews with high-speed navigation, voice control, and auto-scrolling.</p>
+                                    </div>
+                                    <div className="w-full space-y-3 pt-2">
+                                        <label className="flex items-center justify-center gap-3 py-4 bg-blue-600 text-white rounded-2xl font-bold hover:bg-blue-700 transition-all shadow-xl shadow-blue-200 active:scale-95 group cursor-pointer">
+                                            <Icon name="Upload" size={20} className="group-hover:translate-y-[-2px] transition-transform" />
+                                            Upload SiteImprove CSV
+                                            <input type="file" accept=".csv" onChange={handleFileUpload} className="hidden" />
+                                        </label>
+                                        <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase py-2">
+                                            <div className="h-px flex-grow bg-slate-100"></div>
+                                            <span>Or use text list</span>
+                                            <div className="h-px flex-grow bg-slate-100"></div>
+                                        </div>
+                                        <button 
+                                            onClick={() => setInputMode('paste')}
+                                            className="w-full flex items-center justify-center gap-2 py-3 bg-slate-50 text-slate-600 border border-slate-200 rounded-xl text-xs font-bold hover:bg-slate-100 transition-colors"
+                                        >
+                                            <Icon name="Clipboard" size={16} />
+                                            Paste List of URLs
+                                        </button>
+                                    </div>
+                                    <div className="flex gap-4 pt-4 border-t w-full justify-center">
+                                        <div className="flex flex-col items-center gap-1">
+                                            <Icon name="Mic" size={14} className="text-slate-300" />
+                                            <span className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">Voice Ready</span>
+                                        </div>
+                                        <div className="flex flex-col items-center gap-1">
+                                            <Icon name="MousePointer2" size={14} className="text-slate-300" />
+                                            <span className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">Scroll Command</span>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -321,70 +466,85 @@
                                 <div className="bg-white border-b p-3 flex items-center justify-between shadow-sm z-10">
                                     <div className="flex items-center gap-4 min-w-0 flex-grow">
                                         <div className="flex items-center gap-1 shrink-0 border-r pr-4">
-                                            <button onClick={() => setCurrentIndex(Math.max(0, currentIndex - 1))} className="p-2 hover:bg-slate-100 rounded transition-colors"><Icon name="ChevronLeft" size={20} /></button>
+                                            <button onClick={() => { stopAutoScroll(); setCurrentIndex(Math.max(0, currentIndex - 1)); }} className="p-2 hover:bg-slate-100 rounded transition-colors"><Icon name="ChevronLeft" size={20} /></button>
                                             <span className="text-xs font-bold text-slate-400 w-12 text-center">{currentIndex + 1} / {items.length}</span>
-                                            <button onClick={() => setCurrentIndex(Math.min(items.length - 1, currentIndex + 1))} className="p-2 hover:bg-slate-100 rounded transition-colors"><Icon name="ChevronRight" size={20} /></button>
+                                            <button onClick={() => { stopAutoScroll(); setCurrentIndex(Math.min(items.length - 1, currentIndex + 1)); }} className="p-2 hover:bg-slate-100 rounded transition-colors"><Icon name="ChevronRight" size={20} /></button>
                                         </div>
                                         <div className="flex flex-col gap-1.5 flex-grow max-w-md">
                                             <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg">
                                                 <Icon name="ClipboardSearch" size={14} className="text-blue-500 shrink-0" />
                                                 <div className="flex flex-col">
-                                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">Scanning for:</span>
-                                                    <span className="text-xs font-bold text-slate-700 truncate">{auditSearchTerm || 'Nothing set'}</span>
+                                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">Looking for:</span>
+                                                    <span className="text-xs font-bold text-slate-700 truncate">{auditSearchTerm}</span>
                                                 </div>
-                                                <div className="text-[10px] text-slate-400 flex items-center gap-1 ml-auto"><span>Focus + </span><span className="kbd">Ctrl</span><span className="kbd">F</span></div>
                                             </div>
                                         </div>
                                     </div>
-                                    
-                                    {/* Decision Area (Context Sensitive) */}
                                     <div className="flex items-center gap-4 shrink-0 ml-4 border-l pl-4">
                                         {workflowMode === 'decision' ? (
                                             <div className="flex gap-2">
-                                                <div className="flex flex-col items-end mr-2 text-right">
-                                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Orbitrap IUS?</span>
-                                                    <span className="text-[9px] text-slate-400 italic">Auto-advances</span>
-                                                </div>
                                                 <button onClick={() => markStatus(currentItem.id, 'yes')} className={`flex items-center gap-2 px-6 py-2 rounded-xl font-black transition-all shadow-md active:scale-95 ${currentItem.status === 'yes' ? 'bg-green-600 text-white ring-4 ring-green-100' : 'bg-white text-green-700 border-2 border-green-600 hover:bg-green-50'}`}>
-                                                    <Icon name="CheckCircle2" size={18} /> <span className="hidden sm:inline">YES</span>
+                                                    <Icon name="CheckCircle2" size={18} /> YES
                                                 </button>
                                                 <button onClick={() => markStatus(currentItem.id, 'no')} className={`flex items-center gap-2 px-6 py-2 rounded-xl font-black transition-all shadow-md active:scale-95 ${currentItem.status === 'no' ? 'bg-red-600 text-white ring-4 ring-red-100' : 'bg-white text-red-700 border-2 border-red-600 hover:bg-red-50'}`}>
-                                                    <Icon name="XCircle" size={18} /> <span className="hidden sm:inline">NO</span>
+                                                    <Icon name="XCircle" size={18} /> NO
                                                 </button>
                                             </div>
                                         ) : (
                                             <div className="flex flex-col gap-1 w-64">
-                                                <div className="flex items-center justify-between">
-                                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Audit Notes</span>
-                                                    <span className="text-[9px] text-slate-400 italic">Saved to export</span>
-                                                </div>
                                                 <textarea 
                                                     value={currentItem.notes} 
                                                     onChange={(e) => updateNotes(currentItem.id, e.target.value)}
-                                                    placeholder="Enter manual notes for this URL..."
-                                                    className="w-full h-12 p-1.5 text-xs border rounded-lg focus:ring-1 focus:ring-blue-500 focus:outline-none resize-none bg-slate-50"
+                                                    placeholder="Audit notes (Voice dictation active)..."
+                                                    className="w-full h-12 p-1.5 text-xs border rounded-lg resize-none bg-slate-50"
                                                 />
                                             </div>
                                         )}
                                     </div>
                                 </div>
 
-                                <div className="bg-slate-800 text-white shrink-0">
-                                    <div className="px-4 py-2 border-b border-slate-700 bg-slate-900/50">
-                                        <h2 className="text-sm font-bold text-white truncate">{currentItem.title}</h2>
+                                <div className="bg-slate-800 text-white shrink-0 flex items-center justify-between px-4 py-2 border-b border-slate-700 shadow-inner">
+                                    <div className="flex items-center gap-3 overflow-hidden">
+                                        <Icon name="Globe" size={14} className="text-slate-400 shrink-0" />
+                                        <h2 className="text-xs font-bold truncate">{currentItem.title}</h2>
                                     </div>
-                                    <div className="px-4 py-1.5 flex items-center justify-between">
-                                        <div className="flex items-center gap-3 overflow-hidden min-w-0">
-                                            <span className="text-[10px] font-bold text-slate-400 uppercase shrink-0">Audit Target:</span>
-                                            <span className="text-xs font-mono text-slate-300 truncate">{currentItem.url}</span>
-                                        </div>
-                                        <div className="flex items-center gap-3 shrink-0 ml-4">
-                                            <a href={currentItem.url} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 transition-colors"><Icon name="ExternalLink" size={14} /></a>
-                                        </div>
+                                    <div className="flex gap-2 items-center shrink-0">
+                                        {isAutoScrolling && (
+                                            <div className="flex items-center gap-1 bg-red-600 px-2 py-0.5 rounded animate-pulse text-[9px] font-bold uppercase tracking-wider">
+                                                <div className="w-1.5 h-1.5 bg-white rounded-full"></div>
+                                                Reading Active
+                                            </div>
+                                        )}
+                                        <button onClick={() => handleVoiceCommand(isAutoScrolling ? 'stop' : 'scroll')} className="p-1 px-3 bg-slate-700 rounded text-[10px] hover:bg-slate-600 transition-colors font-bold uppercase border border-slate-600">
+                                            {isAutoScrolling ? 'Stop [Pause]' : 'Start [Scroll]'}
+                                        </button>
                                     </div>
                                 </div>
-                                <div className="flex-grow bg-white">
-                                    <iframe key={currentItem.id} src={currentItem.url} className="w-full h-full border-none" title="Audit View" />
+
+                                <div 
+                                    id="audit-viewer-container" 
+                                    ref={scrollContainerRef} 
+                                    className={`flex-grow overflow-y-auto bg-white relative ${isAutoScrolling ? 'autoscroll-active' : ''}`}
+                                >
+                                    <iframe 
+                                        key={currentItem.id} 
+                                        src={currentItem.url} 
+                                        className="w-full border-none"
+                                        style={{ height: '10000px' }} 
+                                        title="Audit View" 
+                                    />
+                                    <div className="fixed bottom-6 right-6 bg-slate-800/90 text-white px-5 py-2.5 rounded-2xl text-[10px] font-bold backdrop-blur-md border border-slate-700 shadow-2xl flex items-center gap-3 z-50">
+                                        <div className="flex items-center gap-1.5 border-r border-slate-600 pr-3">
+                                            <Icon name="Mic" size={12} className={isListening ? "text-red-400" : "text-slate-400"} />
+                                            <span>Voice Control {isListening ? "ON" : "OFF"}</span>
+                                        </div>
+                                        <div className="flex gap-4">
+                                            <span>"Yes"</span>
+                                            <span>"No"</span>
+                                            <span>"Next"</span>
+                                            <span>"Scroll"</span>
+                                        </div>
+                                    </div>
                                 </div>
                             </>
                         )}
