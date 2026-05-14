@@ -241,6 +241,7 @@
                     if (container) container.scrollTop -= 600;
                     feedback = 'Scrolling Up';
                 } else if (workflowMode === 'notes') {
+                    // Dictation logic
                     const currentNotes = currentItem.notes || '';
                     const newNotes = currentNotes + (currentNotes ? ' ' : '') + originalTranscript;
                     updateNotes(currentItem.id, newNotes);
@@ -402,6 +403,11 @@
                                                     <span className="text-[9px] font-mono text-slate-400 truncate mt-0.5">{item.url}</span>
                                                 </div>
                                                 <div className="flex items-center gap-1 shrink-0">
+                                                    {item.notes && item.notes.trim() !== '' && (
+                                                        <span className="h-5 w-5 flex items-center justify-center rounded-full bg-blue-100 text-blue-600" title="Has Notes">
+                                                            <Icon name="MessageSquare" size={10} />
+                                                        </span>
+                                                    )}
                                                     {item.status !== 'pending' && <span className={`h-5 w-5 flex items-center justify-center rounded-full text-[10px] font-bold ${item.status === 'yes' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{item.status === 'yes' ? 'Y' : 'N'}</span>}
                                                 </div>
                                             </div>
@@ -491,13 +497,16 @@
                                                 </button>
                                             </div>
                                         ) : (
-                                            <div className="flex flex-col gap-1 w-64">
+                                            <div className="flex flex-col gap-1 w-64 relative group">
                                                 <textarea 
                                                     value={currentItem.notes} 
                                                     onChange={(e) => updateNotes(currentItem.id, e.target.value)}
                                                     placeholder="Audit notes (Voice dictation active)..."
-                                                    className="w-full h-12 p-1.5 text-xs border rounded-lg resize-none bg-slate-50"
+                                                    className="w-full h-12 p-1.5 text-xs border rounded-lg resize-none bg-slate-50 focus:ring-2 focus:ring-blue-400 transition-all"
                                                 />
+                                                <div className="absolute -top-6 right-0 text-[10px] font-bold text-blue-500 opacity-0 group-focus-within:opacity-100 transition-opacity flex items-center gap-1">
+                                                    <Icon name="Mic" size={10} /> Speaking to record...
+                                                </div>
                                             </div>
                                         )}
                                     </div>
@@ -533,16 +542,33 @@
                                         style={{ height: '10000px' }} 
                                         title="Audit View" 
                                     />
-                                    <div className="fixed bottom-6 right-6 bg-slate-800/90 text-white px-5 py-2.5 rounded-2xl text-[10px] font-bold backdrop-blur-md border border-slate-700 shadow-2xl flex items-center gap-3 z-50">
-                                        <div className="flex items-center gap-1.5 border-r border-slate-600 pr-3">
-                                            <Icon name="Mic" size={12} className={isListening ? "text-red-400" : "text-slate-400"} />
-                                            <span>Voice Control {isListening ? "ON" : "OFF"}</span>
+                                    
+                                    {/* VOICE CONTROL PANEL */}
+                                    <div className="fixed bottom-6 right-6 bg-slate-900/95 text-white px-5 py-3 rounded-2xl text-[10px] font-bold backdrop-blur-md border border-slate-700 shadow-2xl flex flex-col gap-2 z-50 max-w-sm transition-all">
+                                        <div className="flex items-center justify-between gap-3 border-b border-slate-700 pb-2">
+                                            <div className="flex items-center gap-2">
+                                                <div className={`w-2 h-2 rounded-full ${isListening ? "bg-red-500 animate-pulse" : "bg-slate-500"}`}></div>
+                                                <span className="uppercase tracking-widest text-[9px]">Voice Control {isListening ? "Active" : "Disabled"}</span>
+                                            </div>
+                                            {!isListening && <span className="text-slate-400 italic font-normal">Enable in sidebar</span>}
                                         </div>
-                                        <div className="flex gap-4">
-                                            <span>"Yes"</span>
-                                            <span>"No"</span>
-                                            <span>"Next"</span>
-                                            <span>"Scroll"</span>
+                                        
+                                        <div className="space-y-2">
+                                            {workflowMode === 'decision' ? (
+                                                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-slate-300">
+                                                    <div className="flex justify-between"><span>"Yes"</span><span className="text-slate-500">→ Mark Yes</span></div>
+                                                    <div className="flex justify-between"><span>"No"</span><span className="text-slate-500">→ Mark No</span></div>
+                                                    <div className="flex justify-between"><span>"Next"</span><span className="text-slate-500">→ Skip</span></div>
+                                                    <div className="flex justify-between"><span>"Scroll"</span><span className="text-slate-500">→ Play</span></div>
+                                                </div>
+                                            ) : (
+                                                <div className="space-y-1">
+                                                    <p className="text-blue-400 uppercase tracking-tighter text-[9px]">Recording Mode Active</p>
+                                                    <p className="text-slate-300 font-normal leading-relaxed">
+                                                        Just start speaking to dictate your audit notes. Use commands like <span className="font-bold text-white uppercase">"Next"</span> or <span className="font-bold text-white uppercase">"Scroll"</span> to navigate.
+                                                    </p>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                 </div>
