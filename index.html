@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>URL Auditor Tool</title>
+    <title>Blog & SEO Content Auditor</title>
     <!-- React & Babel for in-browser JSX transformation -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -13,8 +13,13 @@
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-        body { font-family: 'Inter', sans-serif; }
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+        body { 
+            font-family: 'Plus Jakarta Sans', sans-serif; 
+        }
+        .font-mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
         iframe { background: white; }
         .kbd { 
             background: #f1f5f9;
@@ -25,14 +30,30 @@
             font-family: monospace;
             box-shadow: 0 1px 0 #cbd5e1;
         }
+        /* Custom scrollbar for premium look */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
     </style>
 </head>
-<body class="bg-slate-50 overflow-hidden">
+<body class="bg-slate-900 overflow-hidden select-none">
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useMemo, useEffect } = React;
+        const { useState, useMemo, useEffect, useRef } = React;
 
+        // Custom Lucide Icon Renderer
         const Icon = ({ name, size = 18, className = "" }) => {
             const [svg, setSvg] = useState("");
             useEffect(() => {
@@ -56,7 +77,7 @@
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
-                    strokeWidth="2"
+                    strokeWidth="2.2"
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     className={className}
@@ -71,14 +92,21 @@
             const [metaRows, setMetaRows] = useState([]);
             const [currentIndex, setCurrentIndex] = useState(0);
             const [searchTerm, setSearchTerm] = useState('');
-            const [auditSearchTerm, setAuditSearchTerm] = useState('Orbitrap Exploris, Excedion');
             const [sidebarOpen, setSidebarOpen] = useState(true);
             const [inputMode, setInputMode] = useState('upload');
-            const [workflowMode, setWorkflowMode] = useState('decision');
             const [pastedUrls, setPastedUrls] = useState('');
+            const [showNotification, setShowNotification] = useState(null);
 
-            const ACTION_COL_NAME = "Action: Add Orbitrap IUS Yes or No";
-            const NOTES_COL_NAME = "Notes";
+            // Column Header Constants for Added Audit Fields
+            const ACTION_COL = "Blog Action (Keep/Refresh/Redirect/Delete)";
+            const NOTES_COL = "Audit Notes";
+            const KEYWORDS_COL = "Ranking SEO Keywords";
+
+            // Helper to show custom toasts without using alerts
+            const triggerNotification = (message, type = 'success') => {
+                setShowNotification({ message, type });
+                setTimeout(() => setShowNotification(null), 4000);
+            };
 
             const parseCSVLine = (line) => {
                 const result = [];
@@ -110,53 +138,151 @@
                 const reader = new FileReader();
                 reader.onload = (event) => {
                     const text = event.target.result;
-                    const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
-                    let headerIdx = lines.findIndex(line => line.toLowerCase().includes('url') && line.toLowerCase().includes('title'));
-                    if (headerIdx === -1) return;
+                    // Split lines, trimming whitespace, but keep lines that contain actual data
+                    const rawLines = text.split(/\r?\n/).map(l => l.trim());
+                    
+                    // Filter out comments from the top (starting with #)
+                    const cleanLines = rawLines.filter(line => line !== '' && !line.startsWith('#'));
+                    
+                    if (cleanLines.length === 0) {
+                        triggerNotification("The uploaded CSV appears to be empty.", "error");
+                        return;
+                    }
 
-                    const headers = parseCSVLine(lines[headerIdx]);
-                    if (!headers.includes(ACTION_COL_NAME)) headers.push(ACTION_COL_NAME);
-                    if (!headers.includes(NOTES_COL_NAME)) headers.push(NOTES_COL_NAME);
+                    // Look for the header line where the first column represents the URL (or URL [v2])
+                    let headerIdx = cleanLines.findIndex(line => {
+                        const firstCell = parseCSVLine(line)[0]?.toLowerCase() || '';
+                        return firstCell.startsWith('url') || firstCell.includes('page') || firstCell === 'link';
+                    });
 
-                    const meta = lines.slice(0, headerIdx);
-                    const dataRows = lines.slice(headerIdx + 1);
+                    // If not explicitly found, try default index
+                    if (headerIdx === -1) {
+                        headerIdx = 0;
+                    }
+
+                    const headers = parseCSVLine(cleanLines[headerIdx]);
+                    
+                    // Add audit headers to the sheet export headers if not already in the sheet
+                    const finalHeaders = [...headers];
+                    if (!finalHeaders.includes(ACTION_COL)) finalHeaders.push(ACTION_COL);
+                    if (!finalHeaders.includes(NOTES_COL)) finalHeaders.push(NOTES_COL);
+                    if (!finalHeaders.includes(KEYWORDS_COL)) finalHeaders.push(KEYWORDS_COL);
+
+                    // Meta rows are lines above the true header line
+                    const meta = cleanLines.slice(0, headerIdx);
+                    let dataRows = cleanLines.slice(headerIdx + 1);
+
+                    // Check if the very first row is the "Total" summary row (e.g. starts with URL [v2], or has no valid URL scheme but high numbers)
+                    if (dataRows.length > 0) {
+                        const firstRowValues = parseCSVLine(dataRows[0]);
+                        const firstCell = firstRowValues[0] || '';
+                        // In Adobe reports, the summary line often repeats the column name (e.g. "URL [v2]") or has a high total. 
+                        // If it doesn't look like a valid URL or path (doesn't start with http/https or /), skip it.
+                        if (!firstCell.startsWith('http') && !firstCell.startsWith('/') && !firstCell.includes('.')) {
+                            dataRows = dataRows.slice(1);
+                        }
+                    }
 
                     const newItems = dataRows.map((line, index) => {
                         const values = parseCSVLine(line);
                         const rowData = {};
-                        headers.forEach((h, i) => rowData[h] = values[i] || '');
-                        const existingStatus = rowData[ACTION_COL_NAME]?.toLowerCase();
+                        headers.forEach((h, i) => {
+                            rowData[h] = values[i] || '';
+                        });
+
+                        // 1. Identify URL
+                        let url = values[0] || '';
+
+                        // Ensure absolute URL
+                        if (url && !url.startsWith('http')) {
+                            if (url.startsWith('/')) {
+                                url = `https://www.thermofisher.com${url}`; // Default domain logic helper
+                            } else if (url.includes('.')) {
+                                url = `https://${url}`;
+                            }
+                        }
+
+                        // 2. Extract YTD Visits (Strictly pulling from Column B / Index 1)
+                        let visits = '0';
+                        if (values.length > 1) {
+                            // Extract raw string value from column B
+                            visits = values[1].replace(/[^\d]/g, ''); // Extract numeric characters only
+                            if (!visits) visits = values[1]; // fallback if not strictly numeric
+                        }
+
+                        // 3. Extract Title (Use Pathname of URL or clean hostname)
+                        let title = '';
+                        try {
+                            const parsedUrl = new URL(url);
+                            // Clean up trailing slash and return path, otherwise hostname
+                            let cleanPath = parsedUrl.pathname;
+                            if (cleanPath.endsWith('/')) cleanPath = cleanPath.slice(0, -1);
+                            const pathParts = cleanPath.split('/');
+                            title = pathParts[pathParts.length - 1] || parsedUrl.hostname;
+                            // Decouple readable titles (convert dashes to spaces and capitalize)
+                            title = title.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                            if (!title) title = parsedUrl.hostname;
+                        } catch(e) {
+                            title = url || 'Untitled Blog Post';
+                        }
+
+                        const existingStatus = rowData[ACTION_COL]?.toLowerCase() || 'pending';
+                        const existingNotes = rowData[NOTES_COL] || '';
+                        const existingKeywords = rowData[KEYWORDS_COL] || '';
+
                         return {
                             id: Date.now() + index,
-                            title: rowData['Title'] || 'No Title',
-                            url: rowData['URL'] || '',
-                            status: existingStatus === 'yes' ? 'yes' : existingStatus === 'no' ? 'no' : 'pending',
-                            notes: rowData[NOTES_COL_NAME] || '',
+                            title: title,
+                            url: url,
+                            visits: visits || '0',
+                            status: ['keep', 'refresh', 'redirect', 'delete'].includes(existingStatus) ? existingStatus : 'pending',
+                            notes: existingNotes,
+                            keywords: existingKeywords,
                             originalData: rowData
                         };
-                    }).filter(item => item.url);
+                    }).filter(item => item.url && (item.url.startsWith('http') || item.url.includes('.')));
+
+                    if (newItems.length === 0) {
+                        triggerNotification("No valid URLs found in the CSV. Double-check layout.", "error");
+                        return;
+                    }
 
                     setMetaRows(meta);
-                    setOriginalHeaders(headers);
+                    setOriginalHeaders(finalHeaders);
                     setItems(newItems);
                     setCurrentIndex(0);
+                    triggerNotification(`Successfully loaded ${newItems.length} blog pages for audit!`);
                 };
                 reader.readAsText(file);
             };
 
             const handlePasteSubmit = () => {
                 const urls = pastedUrls.split(/\r?\n/).map(u => u.trim()).filter(u => u !== '');
-                if (urls.length === 0) return;
+                if (urls.length === 0) {
+                    triggerNotification("No URLs entered.", "error");
+                    return;
+                }
 
-                const headers = ["Title", "URL", ACTION_COL_NAME, NOTES_COL_NAME];
-                const newItems = urls.map((url, index) => ({
-                    id: Date.now() + index,
-                    title: url,
-                    url: url.startsWith('http') ? url : `https://${url}`,
-                    status: 'pending',
-                    notes: '',
-                    originalData: { "Title": url, "URL": url }
-                }));
+                const headers = ["Page/Title", "YTD Visits", ACTION_COL, NOTES_COL, KEYWORDS_COL];
+                const newItems = urls.map((url, index) => {
+                    const cleanUrl = url.startsWith('http') ? url : `https://${url}`;
+                    let titleVal = url;
+                    try {
+                        const parsedUrl = new URL(cleanUrl);
+                        titleVal = parsedUrl.pathname !== '/' ? parsedUrl.pathname : parsedUrl.hostname;
+                    } catch(e) {}
+
+                    return {
+                        id: Date.now() + index,
+                        title: titleVal,
+                        url: cleanUrl,
+                        visits: 'N/A',
+                        status: 'pending',
+                        notes: '',
+                        keywords: '',
+                        originalData: { "Page/Title": titleVal, "YTD Visits": 'N/A' }
+                    };
+                });
 
                 setMetaRows([]);
                 setOriginalHeaders(headers);
@@ -164,227 +290,445 @@
                 setCurrentIndex(0);
                 setPastedUrls('');
                 setInputMode('upload');
+                triggerNotification(`Successfully imported ${newItems.length} manual URLs!`);
             };
 
             const markStatus = (id, status) => {
                 setItems(prev => prev.map(item => item.id === id ? { ...item, status } : item));
+                // Auto-advance logic
                 if (items[currentIndex]?.id === id && currentIndex < items.length - 1) {
-                    setCurrentIndex(currentIndex + 1);
+                    setTimeout(() => {
+                        setCurrentIndex(currentIndex + 1);
+                    }, 250);
                 }
             };
 
-            const updateNotes = (id, notes) => {
-                setItems(prev => prev.map(item => item.id === id ? { ...item, notes } : item));
+            const updateField = (id, field, value) => {
+                setItems(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
             };
 
             const exportCSV = () => {
-                if (items.length === 0) return;
+                if (items.length === 0) {
+                    triggerNotification("Nothing to export yet. Please load some URLs first.", "error");
+                    return;
+                }
                 const csvRows = [...metaRows];
-                csvRows.push(originalHeaders.map(h => `"${h}"`).join(','));
+                
+                // Construct Header Row
+                csvRows.push(originalHeaders.map(h => `"${h.replace(/"/g, '""')}"`).join(','));
+                
+                // Construct Data Rows
                 items.forEach(item => {
                     const rowValues = originalHeaders.map(h => {
-                        if (h === ACTION_COL_NAME) return item.status === 'yes' ? '"Yes"' : item.status === 'no' ? '"No"' : '""';
-                        if (h === NOTES_COL_NAME) return `"${(item.notes || '').replace(/"/g, '""')}"`;
+                        if (h === ACTION_COL) return `"${(item.status || 'pending').toUpperCase()}"`;
+                        if (h === NOTES_COL) return `"${(item.notes || '').replace(/"/g, '""')}"`;
+                        if (h === KEYWORDS_COL) return `"${(item.keywords || '').replace(/"/g, '""')}"`;
                         return `"${(item.originalData[h] || '').replace(/"/g, '""')}"`;
                     });
                     csvRows.push(rowValues.join(','));
                 });
+
                 const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
                 const link = document.createElement("a");
                 link.href = URL.createObjectURL(blob);
-                link.setAttribute("download", `audit_results_${new Date().toISOString().split('T')[0]}.csv`);
+                link.setAttribute("download", `blog_audit_results_${new Date().toISOString().split('T')[0]}.csv`);
                 document.body.appendChild(link);
                 link.click();
                 document.body.removeChild(link);
+                triggerNotification("CSV Exported successfully!");
             };
 
             const filteredItems = useMemo(() => {
                 return items.filter(item => 
                     item.url.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                    item.title.toLowerCase().includes(searchTerm.toLowerCase())
+                    item.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    item.notes.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    item.keywords.toLowerCase().includes(searchTerm.toLowerCase())
                 );
             }, [items, searchTerm]);
 
             const currentItem = items[currentIndex];
 
+            // Helper for active status styling
+            const getStatusColor = (status, active) => {
+                switch (status) {
+                    case 'keep':
+                        return active ? 'bg-emerald-600 text-white ring-4 ring-emerald-100' : 'bg-emerald-50 text-emerald-700 border-2 border-emerald-600 hover:bg-emerald-100';
+                    case 'refresh':
+                        return active ? 'bg-indigo-600 text-white ring-4 ring-indigo-100' : 'bg-indigo-50 text-indigo-700 border-2 border-indigo-600 hover:bg-indigo-100';
+                    case 'redirect':
+                        return active ? 'bg-amber-500 text-white ring-4 ring-amber-100' : 'bg-amber-50 text-amber-700 border-2 border-amber-500 hover:bg-amber-100';
+                    case 'delete':
+                        return active ? 'bg-rose-600 text-white ring-4 ring-rose-100' : 'bg-rose-50 text-rose-700 border-2 border-rose-600 hover:bg-rose-100';
+                    default:
+                        return 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300';
+                }
+            };
+
             return (
-                <div className="flex h-screen w-full bg-slate-50 overflow-hidden text-slate-900 text-sm">
-                    {/* Sidebar */}
-                    <div className={`${sidebarOpen ? 'w-1/3 min-w-[320px]' : 'w-12'} flex flex-col border-r bg-white transition-all duration-300 relative shrink-0 shadow-xl z-20`}>
-                        <button onClick={() => setSidebarOpen(!sidebarOpen)} className="absolute -right-3 top-12 bg-white border rounded-full p-1 z-30 hover:bg-slate-100 shadow-md">
-                            <Icon name={sidebarOpen ? "ChevronLeft" : "ChevronRight"} size={16} />
+                <div className="flex h-screen w-full bg-slate-950 overflow-hidden text-slate-900 text-sm">
+                    {/* Custom Notification Toast */}
+                    {showNotification && (
+                        <div className={`fixed top-4 right-4 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-2xl border transition-all duration-300 transform translate-y-0 ${showNotification.type === 'error' ? 'bg-rose-900 border-rose-700 text-rose-100' : 'bg-slate-900 border-emerald-700 text-emerald-100'}`}>
+                            <Icon name={showNotification.type === 'error' ? 'AlertTriangle' : 'CheckCircle2'} className={showNotification.type === 'error' ? 'text-rose-400' : 'text-emerald-400'} />
+                            <span className="font-semibold text-xs">{showNotification.message}</span>
+                        </div>
+                    )}
+
+                    {/* Left Sidebar */}
+                    <div className={`${sidebarOpen ? 'w-96' : 'w-14'} flex flex-col border-r border-slate-800 bg-slate-900 transition-all duration-300 relative shrink-0 z-20`}>
+                        <button 
+                            onClick={() => setSidebarOpen(!sidebarOpen)} 
+                            className="absolute -right-3 top-6 bg-slate-800 border border-slate-700 text-slate-300 rounded-full p-1.5 z-30 hover:bg-slate-700 hover:text-white shadow-lg transition-colors"
+                        >
+                            <Icon name={sidebarOpen ? "ChevronLeft" : "ChevronRight"} size={14} />
                         </button>
-                        {sidebarOpen && (
-                            <div className="flex flex-col h-full">
-                                <div className="p-4 border-b space-y-4 bg-white">
+
+                        {sidebarOpen ? (
+                            <div className="flex flex-col h-full overflow-hidden">
+                                {/* Header Info */}
+                                <div className="p-4 border-b border-slate-800 space-y-4">
                                     <div className="flex items-center justify-between">
-                                        <h1 className="text-xl font-bold flex items-center gap-2">
-                                            <Icon name="LayoutGrid" className="text-blue-600" /> Auditor
-                                        </h1>
+                                        <div className="flex items-center gap-2">
+                                            <div className="p-2 bg-indigo-600 text-white rounded-lg">
+                                                <Icon name="SearchCode" size={18} />
+                                            </div>
+                                            <div>
+                                                <h1 className="text-sm font-bold text-white tracking-wide">Blog Audit Hub</h1>
+                                                <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">SEO & Traffic Auditor</p>
+                                            </div>
+                                        </div>
                                         <div className="flex gap-1">
-                                            <button onClick={exportCSV} className="p-2 hover:bg-green-50 text-green-700 rounded-md transition-colors" title="Export CSV"><Icon name="Download" size={20} /></button>
-                                            <button onClick={() => { if(confirm('Clear all?')) setItems([]); }} className="p-2 hover:bg-red-50 text-red-600 rounded-md transition-colors" title="Clear All"><Icon name="Trash2" size={20} /></button>
+                                            <button 
+                                                onClick={exportCSV} 
+                                                className="p-2 bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-400 border border-emerald-800/50 rounded-lg transition-all" 
+                                                title="Export Cleaned CSV"
+                                            >
+                                                <Icon name="Download" size={16} />
+                                            </button>
+                                            <button 
+                                                onClick={() => { if(window.confirm('Are you sure you want to clear your loaded blog post list?')) setItems([]); }} 
+                                                className="p-2 bg-rose-600/10 hover:bg-rose-600/20 text-rose-400 border border-rose-800/50 rounded-lg transition-all" 
+                                                title="Clear Audit List"
+                                            >
+                                                <Icon name="Trash2" size={16} />
+                                            </button>
                                         </div>
                                     </div>
 
-                                    {/* Workflow Mode Selector */}
-                                    <div className="space-y-1.5">
-                                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Workflow Mode</label>
-                                        <div className="flex bg-slate-100 p-1 rounded-lg">
-                                            <button onClick={() => setWorkflowMode('decision')} className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-[10px] font-bold uppercase rounded-md transition-all ${workflowMode === 'decision' ? 'bg-white shadow text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}>
-                                                <Icon name="CheckSquare" size={12} /> Yes/No
-                                            </button>
-                                            <button onClick={() => setWorkflowMode('notes')} className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-[10px] font-bold uppercase rounded-md transition-all ${workflowMode === 'notes' ? 'bg-white shadow text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}>
-                                                <Icon name="MessageSquare" size={12} /> Notes
-                                            </button>
-                                        </div>
-                                    </div>
-
-                                    {/* Setup UI */}
-                                    <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-3">
-                                        <div className="space-y-1">
-                                            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">1. Define Scrutiny Terms</label>
-                                            <div className="flex items-center gap-2 bg-white border rounded px-2 py-1 focus-within:ring-1 focus-within:ring-blue-500">
-                                                <Icon name="Search" size={12} className="text-slate-400" />
-                                                <input 
-                                                    type="text" 
-                                                    value={auditSearchTerm} 
-                                                    onChange={(e) => setAuditSearchTerm(e.target.value)} 
-                                                    className="bg-transparent text-xs w-full focus:outline-none py-1"
-                                                    placeholder="e.g. Orbitrap, Exploris..."
-                                                />
+                                    {/* Control Board / Import Area */}
+                                    <div className="bg-slate-950/80 p-3 rounded-xl border border-slate-800/60 space-y-3">
+                                        <div className="space-y-1.5">
+                                            <div className="flex justify-between items-center">
+                                                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Add Content Pages</label>
+                                                <div className="flex bg-slate-800 p-0.5 rounded-md text-[9px] font-bold">
+                                                    <button onClick={() => setInputMode('upload')} className={`px-2 py-0.5 rounded-sm transition-all ${inputMode === 'upload' ? 'bg-slate-700 text-white shadow' : 'text-slate-400'}`}>Adobe CSV</button>
+                                                    <button onClick={() => setInputMode('paste')} className={`px-2 py-0.5 rounded-sm transition-all ${inputMode === 'paste' ? 'bg-slate-700 text-white shadow' : 'text-slate-400'}`}>Paste URLs</button>
+                                                </div>
                                             </div>
-                                        </div>
 
-                                        <div className="space-y-1">
-                                            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">2. Load Audit Targets</label>
-                                            <div className="flex bg-slate-200/50 p-1 rounded">
-                                                <button onClick={() => setInputMode('upload')} className={`flex-1 py-1 text-[9px] font-bold uppercase rounded transition-all ${inputMode === 'upload' ? 'bg-white shadow text-slate-800' : 'text-slate-500'}`}>CSV</button>
-                                                <button onClick={() => setInputMode('paste')} className={`flex-1 py-1 text-[9px] font-bold uppercase rounded transition-all ${inputMode === 'paste' ? 'bg-white shadow text-slate-800' : 'text-slate-500'}`}>Paste</button>
-                                            </div>
-                                            
                                             {inputMode === 'upload' ? (
-                                                <label className="flex items-center justify-center gap-2 w-full py-2 bg-white border border-dashed border-slate-300 rounded hover:border-blue-400 cursor-pointer">
-                                                    <Icon name="Upload" size={12} className="text-slate-400" />
-                                                    <span className="text-[10px] font-medium text-slate-600">Choose CSV</span>
+                                                <label className="flex flex-col items-center justify-center gap-1.5 w-full py-3 bg-slate-900 border border-dashed border-slate-700 hover:border-indigo-500 rounded-lg cursor-pointer transition-colors text-center px-4">
+                                                    <Icon name="FileSpreadsheet" size={18} className="text-indigo-400" />
+                                                    <div className="space-y-0.5">
+                                                        <span className="text-[10px] font-bold text-slate-200 block">Upload Adobe Analytics CSV</span>
+                                                        <span className="text-[9px] text-slate-400 block font-mono">Extracts YTD visits automatically</span>
+                                                    </div>
                                                     <input type="file" accept=".csv" onChange={handleFileUpload} className="hidden" />
                                                 </label>
                                             ) : (
                                                 <div className="space-y-1.5">
-                                                    <textarea className="w-full h-16 p-1.5 text-[10px] border rounded bg-white font-mono" placeholder="Paste URLs here..." value={pastedUrls} onChange={(e) => setPastedUrls(e.target.value)} />
-                                                    <button onClick={handlePasteSubmit} className="w-full py-1.5 bg-slate-800 text-white rounded text-[10px] font-bold hover:bg-black">Load URLs</button>
+                                                    <textarea 
+                                                        className="w-full h-16 p-2 text-[10px] border border-slate-700 rounded-lg bg-slate-900 text-slate-200 font-mono placeholder:text-slate-500 focus:outline-none focus:border-indigo-500" 
+                                                        placeholder="https://example.com/blog-post-1&#13;https://example.com/blog-post-2" 
+                                                        value={pastedUrls} 
+                                                        onChange={(e) => setPastedUrls(e.target.value)} 
+                                                    />
+                                                    <button 
+                                                        onClick={handlePasteSubmit} 
+                                                        className="w-full py-1.5 bg-indigo-600 text-white rounded-lg text-[10px] font-bold hover:bg-indigo-500 shadow-md transition-colors"
+                                                    >
+                                                        Parse Paste URL List
+                                                    </button>
                                                 </div>
                                             )}
                                         </div>
                                     </div>
 
+                                    {/* Search Filter input */}
                                     <div className="relative">
-                                        <Icon name="Filter" className="absolute left-2 top-2 text-slate-400" size={14} />
-                                        <input type="text" placeholder="Filter audit list..." className="w-full pl-8 pr-2 py-1.5 text-xs border rounded-md" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                                        <Icon name="Filter" className="absolute left-2.5 top-2.5 text-slate-400" size={14} />
+                                        <input 
+                                            type="text" 
+                                            placeholder="Search title, URL, keywords, notes..." 
+                                            className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-950 border border-slate-800 rounded-lg text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 transition-colors" 
+                                            value={searchTerm} 
+                                            onChange={(e) => setSearchTerm(e.target.value)} 
+                                        />
                                     </div>
                                 </div>
-                                <div className="flex-grow overflow-y-auto p-2 space-y-1 bg-slate-50">
-                                    {filteredItems.map((item, idx) => {
-                                        const globalIdx = items.findIndex(i => i.id === item.id);
-                                        return (
-                                            <div key={item.id} onClick={() => setCurrentIndex(globalIdx)} className={`group flex items-center justify-between p-2 rounded-md cursor-pointer border transition-all ${currentIndex === globalIdx ? 'bg-blue-50 border-blue-200 shadow-sm' : 'bg-white border-transparent hover:border-slate-300'}`}>
-                                                <div className="flex flex-col min-w-0 pr-2">
-                                                    <span className={`text-[11px] font-bold truncate ${currentIndex === globalIdx ? 'text-blue-700' : 'text-slate-800'}`}>{item.title}</span>
-                                                    <span className="text-[9px] font-mono text-slate-400 truncate mt-0.5">{item.url}</span>
+
+                                {/* Scrollable List of blog posts */}
+                                <div className="flex-grow overflow-y-auto p-3 space-y-2 bg-slate-950">
+                                    <div className="flex items-center justify-between text-[10px] font-semibold text-slate-400 uppercase tracking-wider px-1">
+                                        <span>Target Pages ({filteredItems.length})</span>
+                                        <span>YTD Visits</span>
+                                    </div>
+                                    
+                                    {filteredItems.length === 0 ? (
+                                        <div className="py-8 text-center text-slate-500 text-xs">
+                                            No blog items match search filter.
+                                        </div>
+                                    ) : (
+                                        filteredItems.map((item, idx) => {
+                                            const globalIdx = items.findIndex(i => i.id === item.id);
+                                            const isActive = currentIndex === globalIdx;
+
+                                            // Status pill logic
+                                            let statusBadge = "border-slate-800 text-slate-400 bg-slate-900";
+                                            if (item.status === 'keep') statusBadge = "bg-emerald-950/40 border-emerald-800 text-emerald-400";
+                                            if (item.status === 'refresh') statusBadge = "bg-indigo-950/40 border-indigo-800 text-indigo-400";
+                                            if (item.status === 'redirect') statusBadge = "bg-amber-950/40 border-amber-800 text-amber-400";
+                                            if (item.status === 'delete') statusBadge = "bg-rose-950/40 border-rose-800 text-rose-400";
+
+                                            return (
+                                                <div 
+                                                    key={item.id} 
+                                                    onClick={() => setCurrentIndex(globalIdx)} 
+                                                    className={`group flex items-center justify-between p-2.5 rounded-xl cursor-pointer border transition-all duration-200 ${
+                                                        isActive 
+                                                        ? 'bg-indigo-600/10 border-indigo-500/80 shadow-md' 
+                                                        : 'bg-slate-900/60 border-slate-800/50 hover:border-slate-700 hover:bg-slate-900'
+                                                    }`}
+                                                >
+                                                    <div className="flex flex-col min-w-0 pr-3">
+                                                        <span className={`text-xs font-semibold truncate ${isActive ? 'text-indigo-300' : 'text-slate-200'}`}>
+                                                            {item.title}
+                                                        </span>
+                                                        <span className="text-[9px] font-mono text-slate-500 truncate mt-0.5" title={item.url}>
+                                                            {item.url}
+                                                        </span>
+                                                        <div className="flex items-center gap-1.5 mt-2">
+                                                            <span className={`text-[8px] uppercase tracking-wider px-1.5 py-0.5 rounded-md border font-bold ${statusBadge}`}>
+                                                                {item.status}
+                                                            </span>
+                                                            {item.keywords && (
+                                                                <span className="text-[8px] bg-slate-800 text-slate-300 border border-slate-700 px-1.5 py-0.5 rounded-md font-medium truncate max-w-[120px]" title={`Keywords: ${item.keywords}`}>
+                                                                    🔑 {item.keywords}
+                                                                </span>
+                                                            )}
+                                                            {item.notes && (
+                                                                <Icon name="MessageSquare" size={9} className="text-slate-400" />
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    {/* Right info pill: Shows traffic */}
+                                                    <div className="flex flex-col items-end shrink-0 pl-1">
+                                                        <span className="text-xs font-bold font-mono text-indigo-400 bg-indigo-950/30 border border-indigo-900/40 px-2 py-1 rounded-lg">
+                                                            {Number(item.visits) ? Number(item.visits).toLocaleString() : item.visits}
+                                                        </span>
+                                                        <span className="text-[8px] text-slate-500 uppercase tracking-widest mt-0.5 font-bold">visits</span>
+                                                    </div>
                                                 </div>
-                                                <div className="flex items-center gap-1 shrink-0">
-                                                    {item.status !== 'pending' && <span className={`h-5 w-5 flex items-center justify-center rounded-full text-[10px] font-bold ${item.status === 'yes' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{item.status === 'yes' ? 'Y' : 'N'}</span>}
-                                                    {item.notes && <Icon name="MessageSquare" size={10} className="text-blue-400" />}
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
+                                            );
+                                        })
+                                    )}
+                                </div>
+                            </div>
+                        ) : (
+                            // Minimal Sidebar
+                            <div className="flex flex-col items-center pt-16 gap-4">
+                                <button onClick={exportCSV} className="p-2.5 text-emerald-400 bg-emerald-950/30 hover:bg-emerald-950/60 rounded-lg" title="Export CSV">
+                                    <Icon name="Download" size={16} />
+                                </button>
+                                <div className="h-px w-6 bg-slate-800"></div>
+                                <div className="text-slate-400 font-bold text-xs rotate-90 my-4 tracking-widest uppercase">
+                                    AUDIT
                                 </div>
                             </div>
                         )}
                     </div>
 
-                    {/* Main Viewer */}
-                    <div className="flex-grow flex flex-col bg-slate-100 min-w-0">
+                    {/* Main Workspace Frame */}
+                    <div className="flex-grow flex flex-col bg-slate-950 min-w-0">
                         {!currentItem ? (
-                            <div className="flex-grow flex items-center justify-center text-slate-400 flex-col gap-4">
-                                <div className="p-8 bg-white rounded-2xl shadow-xl flex flex-col items-center gap-4">
-                                    <Icon name="Search" size={48} className="text-slate-100" />
-                                    <div className="text-center">
-                                        <p className="text-slate-600 font-bold">Ready for Audit</p>
-                                        <p className="text-slate-400 text-sm">Define terms and load URLs in the sidebar.</p>
+                            <div className="flex-grow flex items-center justify-center text-slate-400 flex-col gap-4 p-8">
+                                <div className="p-8 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl flex flex-col items-center max-w-sm text-center gap-4">
+                                    <div className="p-4 bg-indigo-600/10 text-indigo-400 rounded-full border border-indigo-500/20">
+                                        <Icon name="TrendingUp" size={32} />
+                                    </div>
+                                    <div>
+                                        <p className="text-slate-100 text-base font-bold">No Blog Pages Loaded</p>
+                                        <p className="text-slate-400 text-xs mt-1 leading-relaxed">
+                                            Upload an Adobe Analytics CSV with YTD Visits or paste direct URLs in the sidebar to get started with your content audit.
+                                        </p>
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800/60 font-mono mt-2">
+                                        Support: Keep | Refresh | Redirect | Delete
                                     </div>
                                 </div>
                             </div>
                         ) : (
                             <>
-                                <div className="bg-white border-b p-3 flex items-center justify-between shadow-sm z-10">
+                                {/* Audit Panel Workspace Header */}
+                                <div className="bg-slate-900 border-b border-slate-800 p-4 flex flex-col xl:flex-row gap-4 xl:items-center justify-between shadow-md z-10">
                                     <div className="flex items-center gap-4 min-w-0 flex-grow">
-                                        <div className="flex items-center gap-1 shrink-0 border-r pr-4">
-                                            <button onClick={() => setCurrentIndex(Math.max(0, currentIndex - 1))} className="p-2 hover:bg-slate-100 rounded transition-colors"><Icon name="ChevronLeft" size={20} /></button>
-                                            <span className="text-xs font-bold text-slate-400 w-12 text-center">{currentIndex + 1} / {items.length}</span>
-                                            <button onClick={() => setCurrentIndex(Math.min(items.length - 1, currentIndex + 1))} className="p-2 hover:bg-slate-100 rounded transition-colors"><Icon name="ChevronRight" size={20} /></button>
+                                        <div className="flex items-center gap-1.5 shrink-0 bg-slate-950 border border-slate-800 p-1.5 rounded-xl">
+                                            <button 
+                                                onClick={() => setCurrentIndex(Math.max(0, currentIndex - 1))} 
+                                                className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 transition-colors disabled:opacity-35"
+                                                disabled={currentIndex === 0}
+                                            >
+                                                <Icon name="ChevronLeft" size={16} />
+                                            </button>
+                                            <span className="text-[10px] font-bold font-mono text-slate-400 w-16 text-center">
+                                                {currentIndex + 1} / {items.length}
+                                            </span>
+                                            <button 
+                                                onClick={() => setCurrentIndex(Math.min(items.length - 1, currentIndex + 1))} 
+                                                className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 transition-colors disabled:opacity-35"
+                                                disabled={currentIndex === items.length - 1}
+                                            >
+                                                <Icon name="ChevronRight" size={16} />
+                                            </button>
                                         </div>
-                                        <div className="flex flex-col gap-1.5 flex-grow max-w-md">
-                                            <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg">
-                                                <Icon name="ClipboardSearch" size={14} className="text-blue-500 shrink-0" />
-                                                <div className="flex flex-col">
-                                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">Scanning for:</span>
-                                                    <span className="text-xs font-bold text-slate-700 truncate">{auditSearchTerm || 'Nothing set'}</span>
-                                                </div>
-                                                <div className="text-[10px] text-slate-400 flex items-center gap-1 ml-auto"><span>Focus + </span><span className="kbd">Ctrl</span><span className="kbd">F</span></div>
+
+                                        <div className="flex flex-col min-w-0">
+                                            <h2 className="text-sm font-bold text-white truncate max-w-[400px]" title={currentItem.title}>
+                                                {currentItem.title}
+                                            </h2>
+                                            <div className="flex items-center gap-2 mt-1">
+                                                <span className="text-[9px] font-mono text-slate-400 truncate max-w-[280px]" title={currentItem.url}>{currentItem.url}</span>
+                                                <a href={currentItem.url} target="_blank" rel="noreferrer" className="text-indigo-400 hover:text-indigo-300 transition-colors flex items-center gap-1 text-[9px]">
+                                                    <Icon name="ExternalLink" size={10} /> Open tab
+                                                </a>
                                             </div>
+                                        </div>
+
+                                        <div className="hidden sm:flex flex-col bg-slate-950/80 px-3 py-1.5 rounded-xl border border-slate-800 shrink-0">
+                                            <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">YTD Visits</span>
+                                            <span className="text-xs font-black text-indigo-400 font-mono">
+                                                {Number(currentItem.visits) ? Number(currentItem.visits).toLocaleString() : currentItem.visits}
+                                            </span>
                                         </div>
                                     </div>
                                     
-                                    {/* Decision Area (Context Sensitive) */}
-                                    <div className="flex items-center gap-4 shrink-0 ml-4 border-l pl-4">
-                                        {workflowMode === 'decision' ? (
-                                            <div className="flex gap-2">
-                                                <div className="flex flex-col items-end mr-2 text-right">
-                                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Orbitrap IUS?</span>
-                                                    <span className="text-[9px] text-slate-400 italic">Auto-advances</span>
-                                                </div>
-                                                <button onClick={() => markStatus(currentItem.id, 'yes')} className={`flex items-center gap-2 px-6 py-2 rounded-xl font-black transition-all shadow-md active:scale-95 ${currentItem.status === 'yes' ? 'bg-green-600 text-white ring-4 ring-green-100' : 'bg-white text-green-700 border-2 border-green-600 hover:bg-green-50'}`}>
-                                                    <Icon name="CheckCircle2" size={18} /> <span className="hidden sm:inline">YES</span>
-                                                </button>
-                                                <button onClick={() => markStatus(currentItem.id, 'no')} className={`flex items-center gap-2 px-6 py-2 rounded-xl font-black transition-all shadow-md active:scale-95 ${currentItem.status === 'no' ? 'bg-red-600 text-white ring-4 ring-red-100' : 'bg-white text-red-700 border-2 border-red-600 hover:bg-red-50'}`}>
-                                                    <Icon name="XCircle" size={18} /> <span className="hidden sm:inline">NO</span>
-                                                </button>
-                                            </div>
-                                        ) : (
-                                            <div className="flex flex-col gap-1 w-64">
-                                                <div className="flex items-center justify-between">
-                                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Audit Notes</span>
-                                                    <span className="text-[9px] text-slate-400 italic">Saved to export</span>
-                                                </div>
-                                                <textarea 
-                                                    value={currentItem.notes} 
-                                                    onChange={(e) => updateNotes(currentItem.id, e.target.value)}
-                                                    placeholder="Enter manual notes for this URL..."
-                                                    className="w-full h-12 p-1.5 text-xs border rounded-lg focus:ring-1 focus:ring-blue-500 focus:outline-none resize-none bg-slate-50"
-                                                />
-                                            </div>
-                                        )}
+                                    {/* Actions Row */}
+                                    <div className="flex flex-wrap items-center gap-2 shrink-0 border-t xl:border-t-0 border-slate-800 pt-3 xl:pt-0">
+                                        <div className="flex flex-col mr-2">
+                                            <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-wider">Blog Audit Action:</span>
+                                            <span className="text-[8px] text-slate-500 italic">Selecting auto-advances</span>
+                                        </div>
+                                        <div className="flex gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                                            <button 
+                                                onClick={() => markStatus(currentItem.id, 'keep')} 
+                                                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-bold transition-all shadow ${
+                                                    currentItem.status === 'keep' 
+                                                    ? 'bg-emerald-600 text-white shadow-emerald-900/50' 
+                                                    : 'text-emerald-400 hover:bg-slate-900'
+                                                }`}
+                                            >
+                                                <Icon name="CheckCircle" size={13} /> Keep
+                                            </button>
+                                            
+                                            <button 
+                                                onClick={() => markStatus(currentItem.id, 'refresh')} 
+                                                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-bold transition-all shadow ${
+                                                    currentItem.status === 'refresh' 
+                                                    ? 'bg-indigo-600 text-white shadow-indigo-900/50' 
+                                                    : 'text-indigo-400 hover:bg-slate-900'
+                                                }`}
+                                            >
+                                                <Icon name="RefreshCw" size={13} /> Refresh
+                                            </button>
+
+                                            <button 
+                                                onClick={() => markStatus(currentItem.id, 'redirect')} 
+                                                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-bold transition-all shadow ${
+                                                    currentItem.status === 'redirect' 
+                                                    ? 'bg-amber-500 text-white shadow-amber-900/50' 
+                                                    : 'text-amber-400 hover:bg-slate-900'
+                                                }`}
+                                            >
+                                                <Icon name="Shuffle" size={13} /> Redirect
+                                            </button>
+
+                                            <button 
+                                                onClick={() => markStatus(currentItem.id, 'delete')} 
+                                                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-bold transition-all shadow ${
+                                                    currentItem.status === 'delete' 
+                                                    ? 'bg-rose-600 text-white shadow-rose-900/50' 
+                                                    : 'text-rose-400 hover:bg-slate-900'
+                                                }`}
+                                            >
+                                                <Icon name="Trash2" size={13} /> Delete
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
 
-                                <div className="bg-slate-800 text-white shrink-0">
-                                    <div className="px-4 py-2 border-b border-slate-700 bg-slate-900/50">
-                                        <h2 className="text-sm font-bold text-white truncate">{currentItem.title}</h2>
+                                {/* Live Custom Text/Field inputs Row */}
+                                <div className="bg-slate-900/40 border-b border-slate-800/80 p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    {/* Field Area 1: SEO Keywords */}
+                                    <div className="flex flex-col space-y-1 bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+                                        <div className="flex items-center justify-between">
+                                            <label className="text-[10px] font-extrabold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                                                <Icon name="Key" size={11} className="text-yellow-400" /> Ranking SEO Keywords
+                                            </label>
+                                            <span className="text-[8px] text-slate-500 font-medium">Comma separated terms</span>
+                                        </div>
+                                        <input 
+                                            type="text" 
+                                            value={currentItem.keywords} 
+                                            onChange={(e) => updateField(currentItem.id, 'keywords', e.target.value)}
+                                            placeholder="e.g. analytics tracking, content strategy, blog optimization, target keyword..."
+                                            className="w-full text-xs font-semibold px-3 py-2 border border-slate-700 rounded-lg bg-slate-950 text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-indigo-500 transition-colors shadow-inner"
+                                        />
                                     </div>
-                                    <div className="px-4 py-1.5 flex items-center justify-between">
-                                        <div className="flex items-center gap-3 overflow-hidden min-w-0">
-                                            <span className="text-[10px] font-bold text-slate-400 uppercase shrink-0">Audit Target:</span>
-                                            <span className="text-xs font-mono text-slate-300 truncate">{currentItem.url}</span>
+
+                                    {/* Field Area 2: Audit Notes */}
+                                    <div className="flex flex-col space-y-1 bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+                                        <div className="flex items-center justify-between">
+                                            <label className="text-[10px] font-extrabold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                                                <Icon name="FileText" size={11} className="text-indigo-400" /> Audit Notes
+                                            </label>
+                                            <span className="text-[8px] text-slate-500 font-medium">Automatic save on edit</span>
                                         </div>
-                                        <div className="flex items-center gap-3 shrink-0 ml-4">
-                                            <a href={currentItem.url} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 transition-colors"><Icon name="ExternalLink" size={14} /></a>
-                                        </div>
+                                        <textarea 
+                                            value={currentItem.notes} 
+                                            onChange={(e) => updateField(currentItem.id, 'notes', e.target.value)}
+                                            placeholder="Specify refresh strategy, internal links updates, or redirect targets here..."
+                                            className="w-full h-9 p-2 text-xs border border-slate-700 rounded-lg bg-slate-950 text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-indigo-500 transition-colors shadow-inner resize-none"
+                                        />
                                     </div>
                                 </div>
-                                <div className="flex-grow bg-white">
-                                    <iframe key={currentItem.id} src={currentItem.url} className="w-full h-full border-none" title="Audit View" />
+
+                                {/* Live Webpage Iframe container */}
+                                <div className="flex-grow bg-slate-950 relative">
+                                    <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 bg-slate-900/80 backdrop-blur-md px-3 py-1 rounded-full text-[9px] text-slate-400 border border-slate-800 flex items-center gap-1 pointer-events-none font-medium">
+                                        <Icon name="Globe" size={10} className="text-indigo-400" /> Previewing Blog Page Frame
+                                    </div>
+                                    
+                                    {/* Interactive fallback screen message because browsers block some frames (x-frame-options) */}
+                                    <div className="absolute inset-0 z-0 flex flex-col items-center justify-center p-8 text-center text-slate-500 select-none bg-slate-950">
+                                        <Icon name="Layout" size={36} className="text-slate-700 animate-pulse mb-3" />
+                                        <p className="text-slate-400 text-xs font-semibold">Web Page Loading Below</p>
+                                        <p className="text-[10px] text-slate-500 max-w-sm mt-1">
+                                            If the workspace appears white, the domain header may restrict iframe nesting. Use the 
+                                            <a href={currentItem.url} target="_blank" rel="noreferrer" className="text-indigo-400 hover:underline inline-flex items-center gap-0.5 mx-1 font-bold">
+                                                "Open tab" link <Icon name="ExternalLink" size={8} />
+                                            </a> 
+                                            above to audit this page on a separate screen.
+                                        </p>
+                                    </div>
+
+                                    <iframe 
+                                        key={currentItem.id} 
+                                        src={currentItem.url} 
+                                        className="w-full h-full border-none relative z-10 shadow-inner bg-white" 
+                                        title="Audit Frame Content" 
+                                    />
                                 </div>
                             </>
                         )}
