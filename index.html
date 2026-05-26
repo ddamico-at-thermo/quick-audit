@@ -108,6 +108,21 @@
                 setTimeout(() => setShowNotification(null), 4000);
             };
 
+            // Clipboard helper safely bypassing security sandbox issue inside iframes
+            const copyToClipboard = (text) => {
+                try {
+                    const tempEl = document.createElement("textarea");
+                    tempEl.value = text;
+                    document.body.appendChild(tempEl);
+                    tempEl.select();
+                    document.execCommand("copy");
+                    document.body.removeChild(tempEl);
+                    triggerNotification("URL copied to clipboard!");
+                } catch (e) {
+                    triggerNotification("Failed to copy URL automatically.", "error");
+                }
+            };
+
             const parseCSVLine = (line) => {
                 const result = [];
                 let cur = '';
@@ -598,11 +613,33 @@
                                             <h2 className="text-sm font-bold text-white truncate max-w-[400px]" title={currentItem.title}>
                                                 {currentItem.title}
                                             </h2>
-                                            <div className="flex items-center gap-2 mt-1">
-                                                <span className="text-[9px] font-mono text-slate-400 truncate max-w-[280px]" title={currentItem.url}>{currentItem.url}</span>
-                                                <a href={currentItem.url} target="_blank" rel="noreferrer" className="text-indigo-400 hover:text-indigo-300 transition-colors flex items-center gap-1 text-[9px]">
-                                                    <Icon name="ExternalLink" size={10} /> Open tab
+                                            <div className="flex items-center gap-2.5 mt-1 flex-wrap">
+                                                <span className="text-[9px] font-mono text-slate-400 truncate max-w-[180px]" title={currentItem.url}>{currentItem.url}</span>
+                                                
+                                                {/* Open original tab */}
+                                                <a href={currentItem.url} target="_blank" rel="noreferrer" className="text-indigo-400 hover:text-indigo-300 transition-all flex items-center gap-1 text-[9px] font-extrabold bg-indigo-950/40 border border-indigo-900/50 px-2 py-0.5 rounded-md hover:bg-indigo-950/70">
+                                                    <Icon name="ExternalLink" size={9} /> Open tab
                                                 </a>
+
+                                                {/* SEMRush URL analysis integration */}
+                                                <a 
+                                                    href={`https://www.semrush.com/analytics/overview/?q=${encodeURIComponent(currentItem.url)}&searchType=url&protocol=https`} 
+                                                    target="_blank" 
+                                                    rel="noreferrer" 
+                                                    className="text-amber-400 hover:text-amber-300 transition-all flex items-center gap-1 text-[9px] font-extrabold bg-amber-950/40 border border-amber-900/50 px-2 py-0.5 rounded-md hover:bg-amber-950/70"
+                                                    title="Open target page details inside SEMRush Overview"
+                                                >
+                                                    <Icon name="Search" size={9} /> SEMRush Overview
+                                                </a>
+
+                                                {/* Copy link option directly */}
+                                                <button 
+                                                    onClick={() => copyToClipboard(currentItem.url)}
+                                                    className="text-slate-300 hover:text-white transition-all flex items-center gap-1 text-[9px] font-extrabold bg-slate-800 border border-slate-750 px-2 py-0.5 rounded-md hover:bg-slate-700"
+                                                    title="Copy full URL to your clipboard"
+                                                >
+                                                    <Icon name="Copy" size={9} /> Copy URL
+                                                </button>
                                             </div>
                                         </div>
 
