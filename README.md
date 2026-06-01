@@ -6,7 +6,7 @@ Simply toggle on the Voice mode on the left sidebar and use the preset commands 
 <br>
 <b>Yes</b> to mark the entry with a 'yes' in the action column and auto-advance to next entry. 
 <br>
-<b>No</b>to mark the entry with a 'no' in the action column and auto-advance to next entry.
+<b>No</b> to mark the entry with a 'no' in the action column and auto-advance to next entry.
 <br>
 <b>Scroll</b> to begin a brisk auto-scroll of the page frame. 
 <br>
